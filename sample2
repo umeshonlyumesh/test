@@ -1,0 +1,237 @@
+// event-chart.component.ts
+import { Component, OnInit } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import {
+  ApexAxisChartSeries,
+  ApexChart,
+  ApexXAxis,
+  ApexYAxis,
+  ApexDataLabels,
+  ApexStroke,
+  ApexLegend,
+  ApexTitleSubtitle,
+  ApexTooltip,
+  ApexMarkers
+} from 'ng-apexcharts';
+
+export type ChartOptions = {
+  series: ApexAxisChartSeries;
+  chart: ApexChart;
+  xaxis: ApexXAxis;
+  yaxis: ApexYAxis;
+  dataLabels: ApexDataLabels;
+  stroke: ApexStroke;
+  legend: ApexLegend;
+  title: ApexTitleSubtitle;
+  tooltip: ApexTooltip;
+  colors: string[];
+  markers: ApexMarkers;
+};
+
+@Component({
+  selector: 'app-event-chart',
+  templateUrl: './event-chart.component.html',
+  styleUrls: ['./event-chart.component.css']
+})
+export class EventChartComponent implements OnInit {
+  public chartOptions: Partial<ChartOptions>;
+  public loading = true;
+  public error = false;
+
+  constructor(private http: HttpClient) {
+    this.initializeChartOptions();
+  }
+
+  ngOnInit() {
+    this.loadData();
+  }
+
+  private initializeChartOptions() {
+    this.chartOptions = {
+      series: [],
+      chart: {
+        type: 'line',
+        height: 350,
+        zoom: { enabled: true },
+        toolbar: { show: true },
+        animations: { enabled: true }
+      },
+      dataLabels: { enabled: false },
+      stroke: { 
+        curve: 'smooth', 
+        width: 2,
+        dashArray: [0, 0, 0] // Different line styles if needed
+      },
+      colors: ['#008FFB', '#00E396', '#FEB019'],
+      markers: {
+        size: 4,
+        hover: { size: 6 }
+      },
+      title: {
+        text: 'Event Counts by 5-Minute Intervals',
+        align: 'left',
+        style: { 
+          fontSize: '16px', 
+          fontWeight: 'bold',
+          color: '#263238'
+        }
+      },
+      xaxis: {
+        type: 'datetime',
+        labels: { 
+          datetimeUTC: false, 
+          format: 'HH:mm',
+          style: {
+            colors: '#78909c'
+          }
+        },
+        axisBorder: {
+          show: true,
+          color: '#78909c'
+        },
+        axisTicks: {
+          show: true,
+          color: '#78909c'
+        },
+        tooltip: {
+          enabled: false
+        }
+      },
+      yaxis: {
+        title: { 
+          text: 'Event Count',
+          style: {
+            color: '#78909c'
+          }
+        },
+        min: 0,
+        forceNiceScale: true,
+        labels: {
+          style: {
+            colors: '#78909c'
+          }
+        }
+      },
+      legend: { 
+        position: 'top',
+        horizontalAlign: 'right',
+        markers: {
+          radius: 2
+        },
+        itemMargin: {
+          horizontal: 10
+        }
+      },
+      tooltip: { 
+        enabled: true,
+        x: { 
+          format: 'HH:mm' 
+        },
+        style: {
+          fontSize: '12px'
+        }
+      }
+    };
+  }
+
+  private loadData() {
+    this.http.get<any[]>('/assets/generated_records.json').subscribe({
+      next: (data) => {
+        this.processData(data);
+        this.loading = false;
+      },
+      error: (err) => {
+        console.error('Error loading data:', err);
+        this.loading = false;
+        this.error = true;
+      }
+    });
+  }
+
+  private processData(data: any[]) {
+    // Helper function to round time to nearest 5 minutes
+    const roundTo5Minutes = (date: Date) => {
+      const minutes = date.getMinutes();
+      const roundedMinutes = Math.floor(minutes / 5) * 5;
+      date.setMinutes(roundedMinutes, 0, 0);
+      return date.getTime();
+    };
+
+    // Initialize time buckets
+    const startTime = new Date('2025-04-08T12:00:00');
+    const endTime = new Date('2025-04-08T14:45:00');
+    const buckets: Record<number, { total: number; stateChange: number; evidence: number }> = {};
+
+    // Create empty buckets for each 5-minute interval
+    for (let time = new Date(startTime); time <= endTime; time.setMinutes(time.getMinutes() + 5)) {
+      const bucketTime = roundTo5Minutes(new Date(time));
+      buckets[bucketTime] = { total: 0, stateChange: 0, evidence: 0 };
+    }
+
+    // Process each event
+    data.forEach(event => {
+      try {
+        const eventTime = new Date(event.event_time);
+        if (isNaN(eventTime.getTime())) {
+          console.warn('Invalid date format:', event.event_time);
+          return;
+        }
+        
+        const bucketTime = roundTo5Minutes(eventTime);
+        
+        if (buckets[bucketTime]) {
+          buckets[bucketTime].total++;
+          
+          if (event.meta_data?.type === 'STATECHANGE') {
+            buckets[bucketTime].stateChange++;
+          } else if (event.meta_data?.type === 'EVIDENCE') {
+            buckets[bucketTime].evidence++;
+          }
+        }
+      } catch (e) {
+        console.warn('Skipping malformed event:', event, e);
+      }
+    });
+
+    // Convert buckets to chart data
+    const timestamps = Object.keys(buckets).map(Number).sort((a, b) => a - b);
+    
+    this.chartOptions.series = [
+      {
+        name: 'Total Events',
+        data: timestamps.map(t => ({
+          x: t,
+          y: buckets[t].total
+        }))
+      },
+      {
+        name: 'State Changes',
+        data: timestamps.map(t => ({
+          x: t,
+          y: buckets[t].stateChange
+        }))
+      },
+      {
+        name: 'Evidence',
+        data: timestamps.map(t => ({
+          x: t,
+          y: buckets[t].evidence
+        }))
+      }
+    ];
+
+    // Update x-axis range if needed
+    this.chartOptions.xaxis = {
+      ...this.chartOptions.xaxis,
+      min: startTime.getTime(),
+      max: endTime.getTime()
+    };
+  }
+
+  // Optional: Add refresh capability
+  refreshData() {
+    this.loading = true;
+    this.error = false;
+    this.loadData();
+  }
+}
