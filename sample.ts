@@ -301,3 +301,44 @@ export class EventChartComponent implements OnInit {
     ];
   }
 }
+
+
+
+////////////////
+
+<div class="chart-container">
+  <div *ngIf="loading" class="loading-message">Loading data...</div>
+  <div *ngIf="!loading" id="chart">
+    <apx-chart
+      [series]="chartOptions.series"
+      [chart]="chartOptions.chart"
+      [xaxis]="chartOptions.xaxis"
+      [yaxis]="chartOptions.yaxis"
+      [dataLabels]="chartOptions.dataLabels"
+      [stroke]="chartOptions.stroke"
+      [title]="chartOptions.title"
+      [legend]="chartOptions.legend"
+      [tooltip]="chartOptions.tooltip"
+      [colors]="chartOptions.colors">
+    </apx-chart>
+  </div>
+</div>
+
+  ////////////////////////
+  .chart-container {
+  max-width: 1000px;
+  margin: 20px auto;
+  padding: 20px;
+  box-shadow: 0 0 10px rgba(0,0,0,0.1);
+}
+
+.loading-message {
+  text-align: center;
+  padding: 50px;
+  font-size: 18px;
+  color: #666;
+}
+
+#chart {
+  margin-top: 20px;
+}
