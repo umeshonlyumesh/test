@@ -123,3 +123,44 @@ export class AppModule {}
     [legend]="chartOptions.legend"
   ></apx-chart>
 </div>
+
+///// defaukt zoom 
+this.chartOptions = {
+  series,
+  chart: {
+    height: 400,
+    type: 'line',
+    zoom: {
+      enabled: true,              // Enable zoom
+      type: 'x',                  // 'x', 'y', or 'xy' — you likely want 'x'
+      autoScaleYaxis: true        // Optional: auto scale y-axis while zooming
+    },
+    toolbar: {
+      autoSelected: 'zoom',       // Default tool
+      tools: {
+        pan: true,                // Enable panning
+        zoom: true,
+        zoomin: true,
+        zoomout: true,
+        reset: true
+      }
+    }
+  },
+  dataLabels: {
+    enabled: false
+  },
+  stroke: {
+    curve: 'smooth'
+  },
+  title: {
+    text: 'Event Types per 5 Minute Interval',
+    align: 'left'
+  },
+  xaxis: {
+    categories
+  },
+  legend: {
+    position: 'top'
+  }
+};
+
