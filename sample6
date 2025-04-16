@@ -1,0 +1,30 @@
+processData(data: any[]): { time: string; counts: { [key: string]: number } }[] {
+  const grouped: Map<string, { [key: string]: number }> = new Map();
+
+  const intervalMinutes = 10;
+  const intervalMs = intervalMinutes * 60 * 1000;
+
+  for (const event of data) {
+    const timestamp = new Date(event.event_time).getTime();
+
+    // Round down to the nearest 10-minute mark
+    const roundedTimestamp = Math.floor(timestamp / intervalMs) * intervalMs;
+    const roundedDate = new Date(roundedTimestamp);
+
+    // Format as 'YYYY-MM-DD HH:mm'
+    const timeKey = `${roundedDate.getFullYear()}-${String(roundedDate.getMonth() + 1).padStart(2, '0')}-${String(roundedDate.getDate()).padStart(2, '0')} ${String(roundedDate.getHours()).padStart(2, '0')}:${String(roundedDate.getMinutes()).padStart(2, '0')}`;
+
+    const type = event.meta_data?.type ?? 'UNKNOWN';
+
+    if (!grouped.has(timeKey)) {
+      grouped.set(timeKey, {});
+    }
+
+    const counts = grouped.get(timeKey)!;
+    counts[type] = (counts[type] || 0) + 1;
+  }
+
+  return Array.from(grouped.entries())
+    .map(([time, counts]) => ({ time, counts }))
+    .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+}
