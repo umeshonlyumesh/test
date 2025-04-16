@@ -1,3 +1,11 @@
+
+headers.entrySet().removeIf(entry ->
+    keywords.stream().anyMatch(keyword ->
+        entry.getKey().toLowerCase().contains(keyword.toLowerCase())
+    ) || entry.getKey().toLowerCase().startsWith("x-")
+);
+
+
 // event-chart.component.ts
 import { Component, OnInit } from '@angular/core';
 import { ChartComponent } from 'ng-apexcharts';
