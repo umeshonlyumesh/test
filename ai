@@ -1,0 +1,22 @@
+The team is two weeks away from implementation, focusing on finalizing DDLC deliverables. All documents are approved except for the playbook, which is expected to be completed today. TDLC readiness is confirmed, with only the TCC flybook pending. The DR plan is in progress, with the PSO team engaged. The implementation plan is ready, with pre-implementation activities scheduled for May 7th and the main implementation on May 11th. The integration with AWS is ongoing, with the script setup expected to be completed by May 6th. The test company onboarding is planned for May 8th. The Go-No-Go meeting is tentatively scheduled for May 2nd. The team is also discussing the use of test data for validation and ensuring that only ad change record types are sent. The team aims to avoid surprises by ensuring all members are aligned on the plan.
+
+
+
+Follow up on the status of the playbook document.
+Ensure the playbook document is approved and closed out today.
+Request RFC approval.
+Once all DDLC deliverables are completed, request RFC approval.
+Monitor the progress of the DR plan.
+Keep following up with the PSO team on the DR plan and ensure it is completed by June 30.
+Prepare for pre-implementation activities.
+Ensure all readiness activities for the production environment are completed by Friday, including database and tool setups.
+Schedule the Go-No Go meeting.
+Solidify the Go-No Go meeting for Tuesday of next week to confirm the target date of May 2.
+Plan the test company onboarding.
+Send the test company onboarding file on May 8th, ensuring it is part of the pre-implementation activity.
+Create a folder on the production server for ConnectDirect.
+Ensure the folder is created as part of the pre-implementation activities on May 7th.
+Clarify ownership of the file submission process.
+Confirm which practice should receive updates on the status of the file submission and any issues.
+Ensure business validation is done through Postman.
+Confirm the method for business validation using Postman and ensure test data is prepared.
