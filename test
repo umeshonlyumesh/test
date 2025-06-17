@@ -44,8 +44,14 @@ describe('CompanyEnrollmentComponent', () => {
 
     fixture = TestBed.createComponent(CompanyEnrollmentComponent);
     component = fixture.componentInstance;
-    component.sort = {} as MatSort;
-    component.paginator = {} as MatPaginator;
+    component.sort = jasmine.createSpyObj('MatSort', ['']);
+    component.paginator = jasmine.createSpyObj('MatPaginator', ['']);
+  });
+
+  beforeEach(() => {
+    avsServiceSpy.getCompanies.and.returnValue(of(mockHttpResponse));
+    avsServiceSpy.deleteCompany.and.returnValue(of(new HttpResponse({ status: 200 }))); // FIXED
+    avsServiceSpy.addAuditLogs.and.returnValue(of(new HttpResponse({ status: 200 }))); // FIXED
   });
 
   it('should create component', () => {
@@ -53,7 +59,6 @@ describe('CompanyEnrollmentComponent', () => {
   });
 
   it('should load company enrollments successfully', () => {
-    avsServiceSpy.getCompanies.and.returnValue(of(mockHttpResponse));
     component.loadCompanyEnrollments();
 
     expect(component.showLoader).toBeFalse();
@@ -64,7 +69,7 @@ describe('CompanyEnrollmentComponent', () => {
   });
 
   it('should handle API failure on loadCompanyEnrollments', () => {
-    avsServiceSpy.getCompanies.and.returnValue(throwError(() => ({ status: 500 })));
+    avsServiceSpy.getCompanies.and.returnValue(throwError(() => new Error('Internal Server Error')));
     component.loadCompanyEnrollments();
 
     expect(component.isShowResponse).toBeFalse();
@@ -84,10 +89,6 @@ describe('CompanyEnrollmentComponent', () => {
   });
 
   it('should call deleteCompany on confirm', fakeAsync(() => {
-    const mockDeleteResp = new HttpResponse({ body: {}, status: 200 });
-    avsServiceSpy.deleteCompany.and.returnValue(of(mockDeleteResp));
-    avsServiceSpy.addAuditLogs.and.returnValue(of({}));
-
     component.secondaryClientId = '2';
     component.onDeleteConfirm();
     tick();
