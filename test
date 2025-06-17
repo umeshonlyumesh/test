@@ -1,125 +1,116 @@
+// company-enrollment.component.spec.ts
+
 import { ComponentFixture, TestBed, fakeAsync, tick } from '@angular/core/testing';
-import { MatTableDataSource, MatSort, MatPaginator } from '@angular/material';
+import { CompanyEnrollmentComponent } from './company-enrollment.component';
+import { AvsService } from '../services/avs.service';
+import { Router } from '@angular/router';
+import { AuthService } from '../services/auth.service';
+import { ChangeDetectorRef } from '@angular/core';
 import { of, throwError } from 'rxjs';
-import { YourComponent } from './your-component.component';
-import { AvsService } from './avs.service';
+import { HttpResponse } from '@angular/common/http';
+import { MatPaginator } from '@angular/material/paginator';
+import { MatSort } from '@angular/material/sort';
+import { MatTableDataSource } from '@angular/material/table';
 
-describe('YourComponent', () => {
-  let component: YourComponent;
-  let fixture: ComponentFixture<YourComponent>;
-  let avsService: jasmine.SpyObj<AvsService>;
-  let mockSort: jasmine.SpyObj<MatSort>;
-  let mockPaginator: jasmine.SpyObj<MatPaginator>;
+// Mocks
+const mockCompanyData = [
+  { clientName: 'Test Inc', secondaryClientId: '2', actionType: 'Add', enrollStatus: 'Success' }
+];
 
-  const mockCompanyData = {
-    body: {
-      data: [
-        { id: 1, name: 'Company A' },
-        { id: 2, name: 'Company B' }
-      ]
-    }
-  };
+const mockHttpResponse = new HttpResponse({
+  body: { data: mockCompanyData },
+  status: 200
+});
 
-  beforeEach(() => {
-    // Create spy objects
-    avsService = jasmine.createSpyObj('AvsService', ['getCompanies']);
-    mockSort = jasmine.createSpyObj('MatSort', ['']);
-    mockPaginator = jasmine.createSpyObj('MatPaginator', ['']);
+const avsServiceSpy = jasmine.createSpyObj('AvsService', ['getCompanies', 'deleteCompany', 'addAuditLogs']);
+const routerSpy = jasmine.createSpyObj('Router', ['navigateByUrl']);
+const authServiceSpy = jasmine.createSpyObj('AuthService', ['updateCapabilities']);
+const cdRefSpy = jasmine.createSpyObj('ChangeDetectorRef', ['detectChanges']);
 
-    TestBed.configureTestingModule({
-      declarations: [YourComponent],
+describe('CompanyEnrollmentComponent', () => {
+  let component: CompanyEnrollmentComponent;
+  let fixture: ComponentFixture<CompanyEnrollmentComponent>;
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({
+      declarations: [CompanyEnrollmentComponent],
       providers: [
-        { provide: AvsService, useValue: avsService }
+        { provide: AvsService, useValue: avsServiceSpy },
+        { provide: Router, useValue: routerSpy },
+        { provide: AuthService, useValue: authServiceSpy },
+        { provide: ChangeDetectorRef, useValue: cdRefSpy },
       ]
-    });
+    }).compileComponents();
 
-    fixture = TestBed.createComponent(YourComponent);
+    fixture = TestBed.createComponent(CompanyEnrollmentComponent);
     component = fixture.componentInstance;
-    
-    // Assign mock sort and paginator
-    component.sort = mockSort;
-    component.paginator = mockPaginator;
+    component.sort = {} as MatSort;
+    component.paginator = {} as MatPaginator;
   });
 
-  it('should initialize loader and hide response when loading', () => {
-    // Arrange
-    avsService.getCompanies.and.returnValue(of(mockCompanyData));
-
-    // Act
-    component.loadCompanyEnrollments();
-
-    // Assert
-    expect(component.showLoader).toBeTrue();
-    expect(component.isShowResponse).toBeFalse();
+  it('should create component', () => {
+    expect(component).toBeTruthy();
   });
 
-  it('should set company enrollments and initialize table on success', fakeAsync(() => {
-    // Arrange
-    avsService.getCompanies.and.returnValue(of(mockCompanyData));
-
-    // Act
+  it('should load company enrollments successfully', () => {
+    avsServiceSpy.getCompanies.and.returnValue(of(mockHttpResponse));
     component.loadCompanyEnrollments();
-    tick(); // Simulate async completion
 
-    // Assert
-    expect(component.companyEnrollments).toEqual(mockCompanyData.body.data);
-    expect(component.initialCompanyEnrollments).toEqual(mockCompanyData.body.data);
-    expect(component.dataSource).toBeInstanceOf(MatTableDataSource);
-    expect(component.dataSource.data).toEqual(mockCompanyData.body.data);
-    expect(component.dataSource.sort).toBe(mockSort);
-    expect(component.dataSource.paginator).toBe(mockPaginator);
+    expect(component.showLoader).toBeFalse();
     expect(component.isShowResponse).toBeTrue();
+    expect(component.isResponseSuccess).toBeTrue();
+    expect(component.companyEnrollments).toEqual(mockCompanyData);
+    expect(component.dataSource instanceof MatTableDataSource).toBeTrue();
+  });
+
+  it('should handle API failure on loadCompanyEnrollments', () => {
+    avsServiceSpy.getCompanies.and.returnValue(throwError(() => ({ status: 500 })));
+    component.loadCompanyEnrollments();
+
+    expect(component.isShowResponse).toBeFalse();
+    expect(component.isResponseSuccess).toBeFalse();
+    expect(component.showLoader).toBeFalse();
+  });
+
+  it('should navigate to add company enrollment', () => {
+    component.onAddCompanyEnrollment();
+    expect(routerSpy.navigateByUrl).toHaveBeenCalledWith('/avs/add-company-enrollment');
+  });
+
+  it('should navigate to edit company enrollment', () => {
+    const event = {}; const id = '2';
+    component.edit('2', event);
+    expect(routerSpy.navigateByUrl).toHaveBeenCalledWith('/avs/edit-company-enrollment/2');
+  });
+
+  it('should call deleteCompany on confirm', fakeAsync(() => {
+    const mockDeleteResp = new HttpResponse({ body: {}, status: 200 });
+    avsServiceSpy.deleteCompany.and.returnValue(of(mockDeleteResp));
+    avsServiceSpy.addAuditLogs.and.returnValue(of({}));
+
+    component.secondaryClientId = '2';
+    component.onDeleteConfirm();
+    tick();
+
     expect(component.isResponseSuccess).toBeTrue();
     expect(component.showLoader).toBeFalse();
   }));
 
-  it('should handle error response', fakeAsync(() => {
-    // Arrange
-    const errorResponse = new Error('API Error');
-    avsService.getCompanies.and.returnValue(throwError(errorResponse));
+  it('should check isApiError correctly', () => {
+    expect(component.isApiError({ statusCode: 400 })).toBeTrue();
+    expect(component.isApiError({ statusCode: 200 })).toBeFalse();
+  });
 
-    // Spy on console.error to verify error handling
-    spyOn(console, 'error');
+  it('should check isEditDeleteActionAllowed correctly', () => {
+    expect(component.isEditDeleteActionAllowed('success')).toBeTrue();
+    expect(component.isEditDeleteActionAllowed('fail')).toBeFalse();
+    expect(component.isEditDeleteActionAllowed('submitted')).toBeFalse();
+  });
 
-    // Act
-    component.loadCompanyEnrollments();
-    tick(); // Simulate async completion
-
-    // Assert
-    expect(component.showLoader).toBeFalse();
-    expect(component.isShowResponse).toBeTrue();
-    expect(component.isResponseSuccess).toBeFalse();
-    expect(console.error).toHaveBeenCalledWith('Error loading company enrollments:', errorResponse);
-  }));
-
-  it('should maintain separate references for companyEnrollments and initialCompanyEnrollments', fakeAsync(() => {
-    // Arrange
-    avsService.getCompanies.and.returnValue(of(mockCompanyData));
-
-    // Act
-    component.loadCompanyEnrollments();
-    tick();
-
-    // Modify the companyEnrollments array
-    component.companyEnrollments.push({ id: 3, name: 'Company C' });
-
-    // Assert
-    expect(component.companyEnrollments.length).toBe(3);
-    expect(component.initialCompanyEnrollments.length).toBe(2);
-    expect(component.initialCompanyEnrollments).toEqual(mockCompanyData.body.data);
-  }));
-
-  it('should properly initialize MatTableDataSource with correct data', fakeAsync(() => {
-    // Arrange
-    avsService.getCompanies.and.returnValue(of(mockCompanyData));
-
-    // Act
-    component.loadCompanyEnrollments();
-    tick();
-
-    // Assert
-    expect(component.dataSource.data).toEqual(mockCompanyData.body.data);
-    expect(component.dataSource.sort).toBeDefined();
-    expect(component.dataSource.paginator).toBeDefined();
-  }));
+  it('should filter records based on search input', () => {
+    component.companySearchText = 'Test';
+    component.initialCompanyEnrollments = mockCompanyData;
+    component.searchCompanyInput();
+    expect(component.dataSource.data).toEqual(mockCompanyData);
+  });
 });
