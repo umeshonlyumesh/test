@@ -1,390 +1,71 @@
-Go to the Portfolio Items → Features section.
-
-Click “+ New” to create a new Feature.
-
-Title: Company Enrollment Onboarding
-
-Description: Add a summary of what the onboarding process should cover (e.g., “Allow new companies to register and complete onboarding via self-service interface, including document uploads and admin approval workflows.”)
-
-Assign to the appropriate Release, Owner, and Team.
-
-🧩 2. Link the Feature to an Initiative (Optional)
-If your organization uses Initiatives (larger strategic efforts), link this Feature under a relevant Initiative (like "Customer Acquisition Platform Enhancements").
-
-🧩 3. Break Down into User Stories
-Create User Stories under the feature to describe functionality from the end user’s perspective. Each story should be:
-
-Independent
-
-Negotiable
-
-Valuable
-
-Estimable
-
-Small
-
-Testable
-
-Example User Stories:
-ID	Title	Description
-US001	As a company, I want to register with basic details	So that I can initiate the onboarding process
-US002	As a company, I want to upload verification documents	So that the system can validate our authenticity
-US003	As an admin, I want to review and approve/reject companies	So that only verified companies get access
-US004	As a company, I want to receive onboarding status updates	So that I stay informed of the approval status
-
-🧩 4. Estimate User Stories
-Use Story Points or T-shirt sizing to estimate the complexity and effort.
-
-🧩 5. Create Tasks under User Stories
-Break each User Story into technical tasks:
-
-UI Design (e.g., form for company details)
-
-Backend API integration
-
-File upload component
-
-Notification mechanism
-
-Role-based access control
-
-🧩 6. Prioritize and Assign Iteration
-Assign Stories to the appropriate Iteration (Sprint) and Owners (developers/testers).
-
-🧩 7. Add Acceptance Criteria
-In each User Story, clearly list Acceptance Criteria:
-
-All mandatory fields are validated
-
-Company data is saved in the database
-
-Admins get notified of new applications
-
-Error handling and retry logic present
-
-🧩 8. Track Progress with Rally Boards
-Use the Kanban or Scrum Board View to:
-
-Track story status (Defined → In Progress → Completed)
-
-Use filters for specific Features, Owners, or Iterations
-
-🧩 9. Link Test Cases (Optional)
-In QA-heavy environments, you may want to create and link Test Cases for each story in the Test Plan section.
-
-🧩 10. Demo, Review, and Close
-Schedule demo during Sprint Review
-
-Collect feedback
-
-Mark Feature and Stories as Accepted upon stakeholder approval
-
-✅ Summary Points for Rally Board Entry
-Field	Value
-Feature Name	Company Enrollment Onboarding
-Description	Self-service company registration, document upload, admin approval
-Linked Initiative	Customer Acquisition Enhancements (or relevant)
-Release	[Choose applicable release or milestone]
-User Stories	Registration, Document Upload, Admin Review, Notification
-Tasks	UI, API, DB, Notification, Testing
-Acceptance Criteria	Clear for each story
-Estimates	Story Points added
-Iteration	[Assigned to sprint or backlog]
-Status	In Progress / Completed per current state
-
-Let me know if you'd like me to write this up in Rally export format (CSV), or as formatted content for direct pasting.
-
-
-
-
-
-
-
-
-You said:
-
-Now u can give me the business value and acceptance criteria 
-
-ChatGPT said:
-Based on the process you've shared in the image regarding the Company Enrollment Onboarding using the TTS-Boarding File Generator, here's how you can define the Business Value and Acceptance Criteria for this feature in your Rally Board.
-
-✅ Business Value
-Implementing an automated and streamlined Company Enrollment Onboarding process offers the following business value:
-
-Reduces Manual Errors
-Automating file generation, renaming, and transfer minimizes human mistakes during data entry and processing.
-
-Improves Operational Efficiency
-Scheduled jobs and standardized file formats reduce dependency on manual follow-ups and coordination between teams (PSO, EWS, Product).
-
-Accelerates Time to Onboard
-Clients are onboarded faster into the AVS system, enabling quicker access to services and revenue generation.
-
-Enhances Transparency and Tracking
-Automated response status and conditional logic (success/failure handling) ensure traceability and accountability in the onboarding process.
-
-Supports Compliance and Audit
-With systematic file creation, renaming, and storage, the process aligns with compliance and auditing requirements.
-
-✅ Acceptance Criteria
-You can attach the following Acceptance Criteria to the Feature or to individual User Stories in Rally:
-
-🔹 AC1: File Generation
-Given client details are filled in the provided template,
-
-When the user clicks the "Generate" button,
-
-Then a .TTL file should be generated with the name format {Client_name}.TTL.
-
-🔹 AC2: File Renaming
-Given a .TTL file is generated,
-
-When the user completes verification,
-
-Then the file should be renamed to AVS2EWSOnboardFile.txt.
-
-🔹 AC3: File Transfer
-Given the renamed file is ready,
-
-When the daily schedule triggers at 01:30 PM EST,
-
-Then the file should be copied to the OCP NAS location and made available to EWS.
-
-🔹 AC4: EWS Response Handling
-Given the file is processed by EWS,
-
-When the response is returned by 03:00 AM EST next day,
-
-Then the response should be transferred to Truist and made available for status verification.
-
-🔹 AC5: Success Flow
-Given the response status is "Successful",
-
-When the file is verified,
-
-Then the client should be added to the company_enrollment table in the AVS database.
-
-🔹 AC6: Failure Flow
-Given the response status is not "Successful",
-
-When the file is verified,
-
-Then the status should be updated to the Product Team for further action.
-
-Let me know if you also want User Story formats with these criteria for Rally entry.
-
-
-
-
-
-
-
-You said:
-Give me the intended purpose also 
-
-
-ChatGPT said:
-Certainly! Here's the full breakdown including the Intended Purpose, Business Value, and Acceptance Criteria for the Company Enrollment Onboarding feature in your Rally board:
-
-🎯 Intended Purpose
-The purpose of the Company Enrollment Onboarding feature is to establish a standardized, semi-automated workflow for onboarding new client companies into the AVS platform. This includes capturing client details, generating a structured file, transferring it to EWS for validation, and updating client records based on response outcomes. The goal is to minimize manual intervention, reduce processing time, and ensure reliable onboarding into the system.
-
-This process ensures:
-
-Accurate and consistent data intake
-
-Timely onboarding of verified clients
-
-Seamless communication between PSO, EWS, and Product teams
-
-💼 Business Value
-Eliminates Redundancy & Human Errors
-By using a file generator and automated transfer jobs, the process reduces risk of manual mistakes and rework.
-
-Faster Time-to-Market
-Onboarding new clients efficiently allows them quicker access to services, reducing revenue delays.
-
-Improves Inter-team Coordination
-Automates handoffs between PSO, EWS, and Product teams through scheduled processes and standard file formats.
-
-Audit-Ready Process
-Every step (file creation, renaming, status handling) is traceable and repeatable, aligning with compliance and audit requirements.
-
-Scalability
-The approach is scalable across multiple client onboardings without needing additional manual effort.
-
-✅ Acceptance Criteria
-🔹 AC1: File Generation
-Given client details are filled in the TTS-Boarding File Generator v1.2 - Template,
-
-When the user clicks on Generate,
-
-Then a .TTL file should be created in the format {Client_name}.TTL.
-
-🔹 AC2: File Renaming
-Given the .TTL file is created,
-
-When the file is reviewed and confirmed,
-
-Then it should be renamed to AVS2EWSOnboardFile.txt.
-
-🔹 AC3: File Copy to NAS
-Given the renamed file exists,
-
-When the daily schedule runs at 01:30 PM EST,
-
-Then it should be copied to the OCP NAS location for EWS processing.
-
-🔹 AC4: EWS Response Processing
-Given EWS processes the onboarding file,
-
-When the scheduled CD job runs at 03:00 AM EST,
-
-Then the response should be available for review.
-
-🔹 AC5: Success Path
-Given the EWS response is Successful,
-
-Then the client should be added to the AVS Database under the company_enrollment table.
-
-🔹 AC6: Failure Path
-Given the EWS response is Not Successful,
-
-Then the onboarding status should be updated and escalated to the Product Team.
-
-Let me know if you want this structured in a format ready for Rally import or export.
-
-
-
-
-
-
-
-You said:
-Please create user stories and size them 
-
-
-ChatGPT said:
-Here are the User Stories for the Company Enrollment Onboarding feature, structured for Rally with estimated Story Points (using Fibonacci sizing: 1, 2, 3, 5, 8, 13). These are independent, testable, and aligned with the process described.
-
-📌 Feature: Company Enrollment Onboarding
-📖 User Story 1: Client Details Entry
-Title: As a PSO user, I want to enter and verify company client details using the Excel template
-Description: Users should be able to fill out client information in the TTS-Boarding File Generator v1.2 Excel template and validate data before generating the onboarding file.
-Acceptance Criteria:
-
-Required fields must be validated.
-
-Instructions are clearly visible.
-
-Errors are flagged during data entry.
-Story Points: 3
-
-📖 User Story 2: Generate .TTL File
-Title: As a PSO user, I want to generate a .TTL file from the filled template
-Description: Clicking the "Generate" button in the template should create a file named {Client_name}.TTL.
-Acceptance Criteria:
-
-File is created with the expected naming convention.
-
-File is saved in the specified local folder.
-Story Points: 2
-
-📖 User Story 3: Rename Onboarding File
-Title: As a PSO user, I want to rename the TTL file to AVS2EWSOnboardFile.txt
-Description: The system should prompt or allow manual renaming for EWS compatibility.
-Acceptance Criteria:
-
-TTL file is renamed correctly and validated before transfer.
-Story Points: 1
-
-📖 User Story 4: Copy File to OCP NAS
-Title: As a system, I want to copy the renamed file to the OCP NAS location on schedule
-Description: The onboarding file must be transferred to a designated location at 01:30 PM EST daily.
-Acceptance Criteria:
-
-Job runs at scheduled time.
-
-File lands in correct folder with confirmation.
-Story Points: 3
-
-📖 User Story 5: Process File in EWS and Return Response
-Title: As EWS, I want to process the onboarding file and generate a response for Truist
-Description: After file ingestion, EWS generates a status file and triggers the CD job at 03:00 AM EST.
-Acceptance Criteria:
-
-Status file is returned and accessible.
-
-Job runs without failure or alert is raised.
-Story Points: 5
-
-📖 User Story 6: Add Client to AVS on Success
-Title: As a system, I want to insert client info into the AVS company_enrollment table when onboarding is successful
-Description: If the response file from EWS is successful, system should persist data in AVS DB.
-Acceptance Criteria:
-
-Successful entries are recorded.
-
-Logging and verification is available.
-Story Points: 3
-
-📖 User Story 7: Notify Product Team on Failure
-Title: As a system, I want to notify the Product team if onboarding fails
-Description: On a failed response, status should be updated and a notification or alert sent to the Product team.
-Acceptance Criteria:
-
-Failure reasons logged.
-
-Email or dashboard alert triggered.
-Story Points: 3
-
-⏳ Total Estimate: 20 Story Points
-Would you like these exported in Rally's CSV import format or want to add priorities and release info?
-
-
-
-
-
-
-
-You said:
-What size of the feature 
-
-
-ChatGPT said:
-Great question.
-
-Based on the 7 user stories provided and their respective estimates, the total effort for the "Company Enrollment Onboarding" feature is:
-
-🎯 Feature Size: 20 Story Points
-📊 Sizing Justification:
-User Story	Story Points
-Client Details Entry	3
-Generate .TTL File	2
-Rename Onboarding File	1
-Copy File to OCP NAS	3
-Process File in EWS	5
-Add Client to AVS	3
-Notify Product Team on Failure	3
-Total	20
-
-🧠 Suggested Rally Feature Size Classification:
-You can classify this feature as "Medium to Large" depending on your team’s velocity and sprint capacity. For most teams:
-
-Small Feature: 8 points or less
-
-Medium Feature: 9–20 points
-
-Large Feature: 21+ points
-
-✅ Recommended Size Label for Rally: Medium
-
-Let me know if you'd like tasks broken down from each user story or need help assigning owners and sprint mapping.
-
-
-
-
-
-
-
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { CompanyEnrollmentComponent } from './company-enrollment.component';
+import { AvsService } from '../services/avs.service';
+import { AuthService } from '../services/auth.service';
+import { Router } from '@angular/router';
+import { of } from 'rxjs';
+import { MatTableModule } from '@angular/material/table';
+import { MatPaginatorModule } from '@angular/material/paginator';
+import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
+
+describe('CompanyEnrollmentComponent', () => {
+  let component: CompanyEnrollmentComponent;
+  let fixture: ComponentFixture<CompanyEnrollmentComponent>;
+  let avsServiceSpy: jasmine.SpyObj<AvsService>;
+
+  beforeEach(async () => {
+    const avsSpy = jasmine.createSpyObj('AvsService', ['getCompanies', 'deleteCompany', 'addAuditLogs']);
+    const routerSpy = jasmine.createSpyObj('Router', ['navigateByUrl']);
+    const authServiceSpy = jasmine.createSpyObj('AuthService', ['updateCapabilities']);
+
+    await TestBed.configureTestingModule({
+      imports: [MatTableModule, MatPaginatorModule, BrowserAnimationsModule],
+      declarations: [CompanyEnrollmentComponent],
+      providers: [
+        { provide: AvsService, useValue: avsSpy },
+        { provide: Router, useValue: routerSpy },
+        { provide: AuthService, useValue: authServiceSpy }
+      ]
+    }).compileComponents();
+
+    fixture = TestBed.createComponent(CompanyEnrollmentComponent);
+    component = fixture.componentInstance;
+    avsServiceSpy = TestBed.inject(AvsService) as jasmine.SpyObj<AvsService>;
+  });
+
+  it('should create', () => {
+    expect(component).toBeTruthy();
+  });
+
+  it('should load company enrollments on init', () => {
+    const mockData = { body: { data: [{ id: 1, clientName: 'Test' }] } };
+    avsServiceSpy.getCompanies.and.returnValue(of(mockData));
+
+    component.ngOnInit();
+
+    expect(avsServiceSpy.getCompanies).toHaveBeenCalled();
+    expect(component.companyEnrollments.length).toBe(1);
+  });
+
+  it('should delete company enrollment and reload', () => {
+    const deleteResp = { body: {} };
+    avsServiceSpy.deleteCompany.and.returnValue(of(deleteResp));
+    avsServiceSpy.addAuditLogs.and.returnValue(of({}));
+
+    component.secondaryClientId = '123';
+    component.onDeleteConfirm();
+
+    expect(avsServiceSpy.deleteCompany).toHaveBeenCalledWith('123');
+    expect(avsServiceSpy.addAuditLogs).toHaveBeenCalled();
+  });
+
+  it('should filter results based on search input', () => {
+    component.initialCompanyEnrollments = [
+      { clientName: 'Alpha' },
+      { clientName: 'Beta' }
+    ];
+    component.companySearchText = 'alpha';
+    component.searchCompanyOnInput();
+    expect(component.dataSource.data.length).toBe(1);
+  });
+});
