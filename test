@@ -1,36 +1,41 @@
-import { Component, OnInit } from '@angular/core';
+import { AfterViewInit, Component, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
+import { distinctUntilChanged } from 'rxjs/operators';
 
 @Component({
-  selector: 'app-user-registration',
-  templateUrl: './user-registration.component.html'
+  selector: 'app-registration',
+  templateUrl: './registration.component.html'
 })
-export class UserRegistrationComponent implements OnInit {
-  registrationForm: FormGroup;
-  isEditMode = false; // Set this based on route or action
+export class RegistrationComponent implements OnInit, AfterViewInit {
+  registrationForm!: FormGroup;
+  isEditMode = false;
 
   constructor(private fb: FormBuilder) {}
 
-  ngOnInit() {
+  ngOnInit(): void {
     this.initForm();
 
     if (this.isEditMode) {
-      // Simulate existing user data for edit mode
-      const existingUser = {
-        fname: 'John',
-        lname: 'Doe',
-        email: 'john@example.com',
-        password: '123456'
-      };
+      // Populate for edit
+      this.registrationForm.patchValue({
+        fname: 'Alice',
+        lname: 'Cooper',
+        email: 'alice@example.com',
+        password: 'secret',
+        address: '100 Main St'
+      });
+    }
+  }
 
-      this.registrationForm.patchValue(existingUser);
-
-      // Enable lname for editing
-      this.registrationForm.get('lname')!.enable();
-    } else {
-      // Auto-copy fname to lname in create mode
-      this.registrationForm.get('fname')!.valueChanges.subscribe(fnameVal => {
-        this.registrationForm.get('lname')!.setValue(fnameVal, { emitEvent: false });
+  ngAfterViewInit(): void {
+    if (!this.isEditMode) {
+      // Subscribe AFTER view has initialized
+      setTimeout(() => {
+        this.registrationForm.get('fname')!.valueChanges
+          .pipe(distinctUntilChanged())
+          .subscribe(val => {
+            this.registrationForm.get('lname')!.setValue(val, { emitEvent: false });
+          });
       });
     }
   }
@@ -38,16 +43,14 @@ export class UserRegistrationComponent implements OnInit {
   initForm() {
     this.registrationForm = this.fb.group({
       fname: ['', Validators.required],
-      lname: [{ value: '', disabled: !this.isEditMode }],
-      email: ['', [Validators.required, Validators.email]],
-      password: ['', Validators.required]
+      lname: ['', Validators.required],
+      email: ['', Validators.email],
+      password: ['', Validators.required],
+      address: ['']
     });
   }
 
-  onSubmit() {
-    if (this.registrationForm.valid) {
-      const formData = this.registrationForm.getRawValue();
-      console.log(this.isEditMode ? 'Edited Data:' : 'New Registration:', formData);
-    }
+  onSubmit(): void {
+    console.log(this.registrationForm.getRawValue());
   }
 }
