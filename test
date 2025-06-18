@@ -1,56 +1,179 @@
-import { AfterViewInit, Component, OnInit } from '@angular/core';
-import { FormBuilder, FormGroup, Validators } from '@angular/forms';
-import { distinctUntilChanged } from 'rxjs/operators';
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { CompanyEnrollmentComponent } from './company-enrollment.component';
+import { FormBuilder, ReactiveFormsModule } from '@angular/forms';
+import { Router, ActivatedRoute } from '@angular/router';
+import { of } from 'rxjs';
+import { AvsService } from 'src/app/services/avs.service';
 
-@Component({
-  selector: 'app-registration',
-  templateUrl: './registration.component.html'
-})
-export class RegistrationComponent implements OnInit, AfterViewInit {
-  registrationForm!: FormGroup;
-  isEditMode = false;
+describe('CompanyEnrollmentComponent', () => {
+  let component: CompanyEnrollmentComponent;
+  let fixture: ComponentFixture<CompanyEnrollmentComponent>;
+  let avsServiceSpy: any;
+  let routerSpy: any;
+  let activatedRouteStub: any;
 
-  constructor(private fb: FormBuilder) {}
+  beforeEach(async () => {
+    avsServiceSpy = jasmine.createSpyObj('AvsService', [
+      'getCompanyById',
+      'addOrUpdateCompanyEnrollments'
+    ]);
+    routerSpy = jasmine.createSpyObj('Router', ['navigate']);
+    activatedRouteStub = {
+      paramMap: of({
+        get: (key: string) => {
+          if (key === 'secondaryClientId') return 'mock-client-id';
+          return null;
+        }
+      })
+    };
 
-  ngOnInit(): void {
-    this.initForm();
+    await TestBed.configureTestingModule({
+      imports: [ReactiveFormsModule],
+      declarations: [CompanyEnrollmentComponent],
+      providers: [
+        FormBuilder,
+        { provide: AvsService, useValue: avsServiceSpy },
+        { provide: Router, useValue: routerSpy },
+        { provide: ActivatedRoute, useValue: activatedRouteStub }
+      ]
+    }).compileComponents();
+  });
 
-    if (this.isEditMode) {
-      // Populate for edit
-      this.registrationForm.patchValue({
-        fname: 'Alice',
-        lname: 'Cooper',
-        email: 'alice@example.com',
-        password: 'secret',
-        address: '100 Main St'
-      });
-    }
-  }
+  beforeEach(() => {
+    fixture = TestBed.createComponent(CompanyEnrollmentComponent);
+    component = fixture.componentInstance;
+    fixture.detectChanges();
+  });
 
-  ngAfterViewInit(): void {
-    if (!this.isEditMode) {
-      // Subscribe AFTER view has initialized
-      setTimeout(() => {
-        this.registrationForm.get('fname')!.valueChanges
-          .pipe(distinctUntilChanged())
-          .subscribe(val => {
-            this.registrationForm.get('lname')!.setValue(val, { emitEvent: false });
-          });
-      });
-    }
-  }
+  it('should create component', () => {
+    expect(component).toBeTruthy();
+  });
 
-  initForm() {
-    this.registrationForm = this.fb.group({
-      fname: ['', Validators.required],
-      lname: ['', Validators.required],
-      email: ['', Validators.email],
-      password: ['', Validators.required],
-      address: ['']
+  it('should set secondaryClientId and call fetchCompanyData in ngOnInit if in edit mode', () => {
+    spyOn(component, 'fetchCompanyData');
+    component.ngOnInit();
+    expect(component.secondaryClientId).toBe('mock-client-id');
+    expect(component.fetchCompanyData).toHaveBeenCalledWith('mock-client-id');
+  });
+
+  it('should initialize the form correctly in initForm()', () => {
+    component.initForm();
+    const form = component.ceFormGroup;
+    expect(form).toBeTruthy();
+    expect(form.contains('secondaryClientId')).toBeTrue();
+    expect(form.contains('accountType')).toBeTrue();
+  });
+
+  it('should populate form with company data in fetchCompanyData()', () => {
+    const mockData = {
+      body: {
+        statusCode: 200,
+        data: {
+          secondaryClientId: '123',
+          accountType: 'Business'
+        }
+      }
+    };
+    avsServiceSpy.getCompanyById.and.returnValue(of(mockData));
+
+    component.fetchCompanyData('123');
+
+    expect(avsServiceSpy.getCompanyById).toHaveBeenCalledWith('123');
+    expect(component.company).toEqual(mockData.body.data);
+    expect(component.ceFormGroup.value.secondaryClientId).toBe('123');
+    expect(component.isResponseSuccess).toBeTrue();
+  });
+
+  it('should show response message on save if form is invalid', () => {
+    component.initForm(); // empty form, required fields missing
+    component.ceFormGroup.markAsTouched(); // to simulate user interaction
+    component.onSaveCompanyEnrollment();
+    expect(component.showResponse).toBeTrue();
+    expect(component.isResponseSuccess).toBeFalse();
+  });
+
+  it('should submit company enrollment in onSaveCompanyEnrollment()', () => {
+    component.initForm();
+    component.ceFormGroup.patchValue({
+      secondaryClientId: '123',
+      accountType: 'Business'
     });
-  }
+    component.isEditMode = false;
 
-  onSubmit(): void {
-    console.log(this.registrationForm.getRawValue());
-  }
-}
+    const mockResponse = {
+      body: {
+        statusCode: 200
+      }
+    };
+
+    avsServiceSpy.addOrUpdateCompanyEnrollments.and.returnValue(of(mockResponse));
+
+    component.onSaveCompanyEnrollment();
+
+    expect(avsServiceSpy.addOrUpdateCompanyEnrollments).toHaveBeenCalled();
+    expect(component.isResponseSuccess).toBeTrue();
+  });
+});
+
+
+
+============================
+
+it('getFormValueSnapshot should return form value snapshot', () => {
+  component.initForm();
+  component.ceFormGroup.patchValue({
+    secondaryClientId: 'test-id',
+    accountType: 'Business'
+  });
+  const snapshot = component.getFormValueSnapshot();
+  expect(snapshot.secondaryClientId).toBe('test-id');
+  expect(snapshot.accountType).toBe('Business');
+});
+
+it('getOptionsList should return sorted array of key-value pairs', () => {
+  const input = { B: 'b_val', A: 'a_val' };
+  const result = component.getOptionsList(input);
+  expect(result).toEqual([
+    { key: 'A', value: 'a_val' },
+    { key: 'B', value: 'b_val' }
+  ]);
+});
+
+it('isFormUnchanged should return true when values match', () => {
+  const val1 = { a: 1, b: 2 };
+  const val2 = { a: 1, b: 2 };
+  expect(component.isFormUnchanged(val1, val2)).toBeTrue();
+});
+
+it('isFormUnchanged should return false when values differ', () => {
+  const val1 = { a: 1, b: 2 };
+  const val2 = { a: 1, b: 3 };
+  expect(component.isFormUnchanged(val1, val2)).toBeFalse();
+});
+
+it('isApiError should return true for non-200 statusCode', () => {
+  expect(component.isApiError({ statusCode: 500 })).toBeTrue();
+});
+
+it('isApiError should return false for 200 statusCode', () => {
+  expect(component.isApiError({ statusCode: 200 })).toBeFalse();
+});
+
+it('cancel should navigate to /avs/company-enrollment', () => {
+  component.cancel();
+  expect(routerSpy.navigate).toHaveBeenCalledWith(['/avs/company-enrollment']);
+});
+
+it('hideToastWithDuration should reset showResponse after timeout', (done) => {
+  component.showResponse = true;
+  component.hideToastWithDuration(100);
+  setTimeout(() => {
+    expect(component.showResponse).toBeFalse();
+    done();
+  }, 150);
+});
+
+it('_successModalButtonClick should navigate to /avs/company-enrollment', () => {
+  component._successModalButtonClick();
+  expect(routerSpy.navigateByUrl).toHaveBeenCalledWith('/avs/company-enrollment');
+});
