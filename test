@@ -1,117 +1,53 @@
-// company-enrollment.component.spec.ts
+import { Component, OnInit } from '@angular/core';
+import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 
-import { ComponentFixture, TestBed, fakeAsync, tick } from '@angular/core/testing';
-import { CompanyEnrollmentComponent } from './company-enrollment.component';
-import { AvsService } from '../services/avs.service';
-import { Router } from '@angular/router';
-import { AuthService } from '../services/auth.service';
-import { ChangeDetectorRef } from '@angular/core';
-import { of, throwError } from 'rxjs';
-import { HttpResponse } from '@angular/common/http';
-import { MatPaginator } from '@angular/material/paginator';
-import { MatSort } from '@angular/material/sort';
-import { MatTableDataSource } from '@angular/material/table';
+@Component({
+  selector: 'app-user-registration',
+  templateUrl: './user-registration.component.html'
+})
+export class UserRegistrationComponent implements OnInit {
+  registrationForm: FormGroup;
+  isEditMode = false; // Set this based on route or action
 
-// Mocks
-const mockCompanyData = [
-  { clientName: 'Test Inc', secondaryClientId: '2', actionType: 'Add', enrollStatus: 'Success' }
-];
+  constructor(private fb: FormBuilder) {}
 
-const mockHttpResponse = new HttpResponse({
-  body: { data: mockCompanyData },
-  status: 200
-});
+  ngOnInit() {
+    this.initForm();
 
-const avsServiceSpy = jasmine.createSpyObj('AvsService', ['getCompanies', 'deleteCompany', 'addAuditLogs']);
-const routerSpy = jasmine.createSpyObj('Router', ['navigateByUrl']);
-const authServiceSpy = jasmine.createSpyObj('AuthService', ['updateCapabilities']);
-const cdRefSpy = jasmine.createSpyObj('ChangeDetectorRef', ['detectChanges']);
+    if (this.isEditMode) {
+      // Simulate existing user data for edit mode
+      const existingUser = {
+        fname: 'John',
+        lname: 'Doe',
+        email: 'john@example.com',
+        password: '123456'
+      };
 
-describe('CompanyEnrollmentComponent', () => {
-  let component: CompanyEnrollmentComponent;
-  let fixture: ComponentFixture<CompanyEnrollmentComponent>;
+      this.registrationForm.patchValue(existingUser);
 
-  beforeEach(async () => {
-    await TestBed.configureTestingModule({
-      declarations: [CompanyEnrollmentComponent],
-      providers: [
-        { provide: AvsService, useValue: avsServiceSpy },
-        { provide: Router, useValue: routerSpy },
-        { provide: AuthService, useValue: authServiceSpy },
-        { provide: ChangeDetectorRef, useValue: cdRefSpy },
-      ]
-    }).compileComponents();
+      // Enable lname for editing
+      this.registrationForm.get('lname')!.enable();
+    } else {
+      // Auto-copy fname to lname in create mode
+      this.registrationForm.get('fname')!.valueChanges.subscribe(fnameVal => {
+        this.registrationForm.get('lname')!.setValue(fnameVal, { emitEvent: false });
+      });
+    }
+  }
 
-    fixture = TestBed.createComponent(CompanyEnrollmentComponent);
-    component = fixture.componentInstance;
-    component.sort = jasmine.createSpyObj('MatSort', ['']);
-    component.paginator = jasmine.createSpyObj('MatPaginator', ['']);
-  });
+  initForm() {
+    this.registrationForm = this.fb.group({
+      fname: ['', Validators.required],
+      lname: [{ value: '', disabled: !this.isEditMode }],
+      email: ['', [Validators.required, Validators.email]],
+      password: ['', Validators.required]
+    });
+  }
 
-  beforeEach(() => {
-    avsServiceSpy.getCompanies.and.returnValue(of(mockHttpResponse));
-    avsServiceSpy.deleteCompany.and.returnValue(of(new HttpResponse({ status: 200 }))); // FIXED
-    avsServiceSpy.addAuditLogs.and.returnValue(of(new HttpResponse({ status: 200 }))); // FIXED
-  });
-
-  it('should create component', () => {
-    expect(component).toBeTruthy();
-  });
-
-  it('should load company enrollments successfully', () => {
-    component.loadCompanyEnrollments();
-
-    expect(component.showLoader).toBeFalse();
-    expect(component.isShowResponse).toBeTrue();
-    expect(component.isResponseSuccess).toBeTrue();
-    expect(component.companyEnrollments).toEqual(mockCompanyData);
-    expect(component.dataSource instanceof MatTableDataSource).toBeTrue();
-  });
-
-  it('should handle API failure on loadCompanyEnrollments', () => {
-    avsServiceSpy.getCompanies.and.returnValue(throwError(() => new Error('Internal Server Error')));
-    component.loadCompanyEnrollments();
-
-    expect(component.isShowResponse).toBeFalse();
-    expect(component.isResponseSuccess).toBeFalse();
-    expect(component.showLoader).toBeFalse();
-  });
-
-  it('should navigate to add company enrollment', () => {
-    component.onAddCompanyEnrollment();
-    expect(routerSpy.navigateByUrl).toHaveBeenCalledWith('/avs/add-company-enrollment');
-  });
-
-  it('should navigate to edit company enrollment', () => {
-    const event = {}; const id = '2';
-    component.edit('2', event);
-    expect(routerSpy.navigateByUrl).toHaveBeenCalledWith('/avs/edit-company-enrollment/2');
-  });
-
-  it('should call deleteCompany on confirm', fakeAsync(() => {
-    component.secondaryClientId = '2';
-    component.onDeleteConfirm();
-    tick();
-
-    expect(component.isResponseSuccess).toBeTrue();
-    expect(component.showLoader).toBeFalse();
-  }));
-
-  it('should check isApiError correctly', () => {
-    expect(component.isApiError({ statusCode: 400 })).toBeTrue();
-    expect(component.isApiError({ statusCode: 200 })).toBeFalse();
-  });
-
-  it('should check isEditDeleteActionAllowed correctly', () => {
-    expect(component.isEditDeleteActionAllowed('success')).toBeTrue();
-    expect(component.isEditDeleteActionAllowed('fail')).toBeFalse();
-    expect(component.isEditDeleteActionAllowed('submitted')).toBeFalse();
-  });
-
-  it('should filter records based on search input', () => {
-    component.companySearchText = 'Test';
-    component.initialCompanyEnrollments = mockCompanyData;
-    component.searchCompanyInput();
-    expect(component.dataSource.data).toEqual(mockCompanyData);
-  });
-});
+  onSubmit() {
+    if (this.registrationForm.valid) {
+      const formData = this.registrationForm.getRawValue();
+      console.log(this.isEditMode ? 'Edited Data:' : 'New Registration:', formData);
+    }
+  }
+}
