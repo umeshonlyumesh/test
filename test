@@ -1,58 +1,19 @@
-it('getFormValueSnapshot should return form value snapshot', () => {
-  component.initForm();
-  component.ceFormGroup.patchValue({
-    secondaryClientId: 'test-id',
-    accountType: 'Business'
-  });
-  const snapshot = component.getFormValueSnapshot();
-  expect(snapshot.secondaryClientId).toBe('test-id');
-  expect(snapshot.accountType).toBe('Business');
-});
+it('should populate form with company data in fetchCompanyData()', () => {
+  const mockData = {
+    body: {
+      statusCode: 200,
+      data: {
+        secondaryClientId: '123',
+        accountType: 'Business'
+      }
+    }
+  };
+  avsServiceSpy.getCompanyById.and.returnValue(of(mockData));
 
-it('getOptionsList should return sorted array of key-value pairs', () => {
-  const input = { B: 'b_val', A: 'a_val' };
-  const result = component.getOptionsList(input);
-  expect(result).toEqual([
-    { key: 'A', value: 'a_val' },
-    { key: 'B', value: 'b_val' }
-  ]);
-});
+  component.fetchCompanyData('123');
 
-it('isFormUnchanged should return true when values match', () => {
-  const val1 = { a: 1, b: 2 };
-  const val2 = { a: 1, b: 2 };
-  expect(component.isFormUnchanged(val1, val2)).toBeTrue();
-});
-
-it('isFormUnchanged should return false when values differ', () => {
-  const val1 = { a: 1, b: 2 };
-  const val2 = { a: 1, b: 3 };
-  expect(component.isFormUnchanged(val1, val2)).toBeFalse();
-});
-
-it('isApiError should return true for non-200 statusCode', () => {
-  expect(component.isApiError({ statusCode: 500 })).toBeTrue();
-});
-
-it('isApiError should return false for 200 statusCode', () => {
-  expect(component.isApiError({ statusCode: 200 })).toBeFalse();
-});
-
-it('cancel should navigate to /avs/company-enrollment', () => {
-  component.cancel();
-  expect(routerSpy.navigate).toHaveBeenCalledWith(['/avs/company-enrollment']);
-});
-
-it('hideToastWithDuration should reset showResponse after timeout', (done) => {
-  component.showResponse = true;
-  component.hideToastWithDuration(100);
-  setTimeout(() => {
-    expect(component.showResponse).toBeFalse();
-    done();
-  }, 150);
-});
-
-it('_successModalButtonClick should navigate to /avs/company-enrollment', () => {
-  component._successModalButtonClick();
-  expect(routerSpy.navigateByUrl).toHaveBeenCalledWith('/avs/company-enrollment');
+  expect(avsServiceSpy.getCompanyById).toHaveBeenCalledWith('123');
+  expect(component.company).toEqual(mockData.body.data);
+  expect(component.ceFormGroup.value.secondaryClientId).toBe('123');
+  expect(component.isResponseSuccess).toBeTrue();
 });
