@@ -130,3 +130,39 @@
         <keep>true</keep>
       </configuration>
     </plugin>
+==================================================================================
+
+<dependencies>
+  <!-- Apache CXF Runtime -->
+  <dependency>
+    <groupId>org.apache.cxf</groupId>
+    <artifactId>cxf-spring-boot-starter-jaxws</artifactId>
+    <version>4.0.3</version>
+  </dependency>
+</dependencies>
+
+<build>
+  <plugins>
+    <plugin>
+      <groupId>org.apache.cxf</groupId>
+      <artifactId>cxf-codegen-plugin</artifactId>
+      <version>4.0.3</version>
+      <executions>
+        <execution>
+          <id>generate-sources</id>
+          <phase>generate-sources</phase>
+          <configuration>
+            <wsdlOptions>
+              <wsdlOption>
+                <wsdl>${project.basedir}/src/main/resources/wsdl/Calculator.wsdl</wsdl>
+              </wsdlOption>
+            </wsdlOptions>
+          </configuration>
+          <goals>
+            <goal>wsdl2java</goal>
+          </goals>
+        </execution>
+      </executions>
+    </plugin>
+  </plugins>
+</build>
