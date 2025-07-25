@@ -1,22 +1,121 @@
-The team is two weeks away from implementation, focusing on finalizing DDLC deliverables. All documents are approved except for the playbook, which is expected to be completed today. TDLC readiness is confirmed, with only the TCC flybook pending. The DR plan is in progress, with the PSO team engaged. The implementation plan is ready, with pre-implementation activities scheduled for May 7th and the main implementation on May 11th. The integration with AWS is ongoing, with the script setup expected to be completed by May 6th. The test company onboarding is planned for May 8th. The Go-No-Go meeting is tentatively scheduled for May 2nd. The team is also discussing the use of test data for validation and ensuring that only ad change record types are sent. The team aims to avoid surprises by ensuring all members are aligned on the plan.
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { CompanyEnrollmentFormComponent } from './company-enrollment-form.component';
+import { ActivatedRoute, Router } from '@angular/router';
+import { of } from 'rxjs';
+import { ReactiveFormsModule } from '@angular/forms';
+import { ChangeDetectorRef } from '@angular/core';
+import { AVSService } from 'src/app/services/avs.service';
+import { CommonService } from 'src/app/services/common.service';
+import { TruCoreModalComponent } from 'src/app/components/tru-core-modal/tru-core-modal.component';
 
+describe('CompanyEnrollmentFormComponent', () => {
+  let component: CompanyEnrollmentFormComponent;
+  let fixture: ComponentFixture<CompanyEnrollmentFormComponent>;
+  let mockAVSService: any;
+  let mockCommonService: any;
+  let mockRouter: any;
+  let mockRoute: any;
+  let mockChangeDetectorRef: any;
 
+  beforeEach(async () => {
+    mockAVSService = {
+      getCompanyById: jasmine.createSpy().and.returnValue(of({ body: { data: { name: 'Test Company' } } })),
+      addOrUpdateCompanyEnrollment: jasmine.createSpy().and.returnValue(of({ body: {} })),
+    };
 
-Follow up on the status of the playbook document.
-Ensure the playbook document is approved and closed out today.
-Request RFC approval.
-Once all DDLC deliverables are completed, request RFC approval.
-Monitor the progress of the DR plan.
-Keep following up with the PSO team on the DR plan and ensure it is completed by June 30.
-Prepare for pre-implementation activities.
-Ensure all readiness activities for the production environment are completed by Friday, including database and tool setups.
-Schedule the Go-No Go meeting.
-Solidify the Go-No Go meeting for Tuesday of next week to confirm the target date of May 2.
-Plan the test company onboarding.
-Send the test company onboarding file on May 8th, ensuring it is part of the pre-implementation activity.
-Create a folder on the production server for ConnectDirect.
-Ensure the folder is created as part of the pre-implementation activities on May 7th.
-Clarify ownership of the file submission process.
-Confirm which practice should receive updates on the status of the file submission and any issues.
-Ensure business validation is done through Postman.
-Confirm the method for business validation using Postman and ensure test data is prepared.
+    mockCommonService = {
+      trimValues: jasmine.createSpy()
+    };
+
+    mockRouter = {
+      navigate: jasmine.createSpy(),
+      navigateByUrl: jasmine.createSpy()
+    };
+
+    mockRoute = {
+      paramMap: of({
+        get: (key: string) => key === 'secondaryClientId' ? '123' : null
+      })
+    };
+
+    mockChangeDetectorRef = {
+      detectChanges: jasmine.createSpy()
+    };
+
+    await TestBed.configureTestingModule({
+      declarations: [CompanyEnrollmentFormComponent],
+      imports: [ReactiveFormsModule],
+      providers: [
+        { provide: ActivatedRoute, useValue: mockRoute },
+        { provide: AVSService, useValue: mockAVSService },
+        { provide: CommonService, useValue: mockCommonService },
+        { provide: Router, useValue: mockRouter },
+        { provide: ChangeDetectorRef, useValue: mockChangeDetectorRef },
+      ]
+    }).compileComponents();
+
+    fixture = TestBed.createComponent(CompanyEnrollmentFormComponent);
+    component = fixture.componentInstance;
+
+    // initialize ceFormGroup to avoid undefined errors
+    component.ceFormGroup = component['fb'].group({
+      primaryId: [''],
+      secondaryClientId: [''],
+    });
+
+    fixture.detectChanges();
+  });
+
+  it('should create component', () => {
+    expect(component).toBeTruthy();
+  });
+
+  it('should detect changes on ngAfterViewChecked', () => {
+    component.ngAfterViewChecked();
+    expect(mockChangeDetectorRef.detectChanges).toHaveBeenCalled();
+  });
+
+  it('should enter edit mode and fetch company data in ngOnInit', () => {
+    spyOn(component, 'fetchCompanyData');
+    component.ngOnInit();
+    expect(component.isEditMode).toBeTrue();
+    expect(component.fetchCompanyData).toHaveBeenCalledWith('123');
+  });
+
+  it('should patch form and set success on successful company fetch', () => {
+    component.fetchCompanyData('123');
+    expect(component.company?.name).toBe('Test Company');
+    expect(component.isResponseSuccess).toBeTrue();
+  });
+
+  it('should not call API if no changes detected on save', () => {
+    component.isEditMode = true;
+    component.initialFormValue = { name: 'Same' };
+    spyOn(component, 'getFormValueSnapshot').and.returnValue({ name: 'Same' });
+    component.saveOrUpdateCompanyEnrollment();
+    expect(component.responseMessage).toBe('No Change Detected');
+    expect(component.isResponseSuccess).toBeFalse();
+  });
+
+  it('should call API if form is valid and changed', () => {
+    component.isEditMode = true;
+    component.initialFormValue = { name: 'Old' };
+    component.ceFormGroup.patchValue({ name: 'New' });
+    spyOn(component, 'getFormValueSnapshot').and.returnValue({ name: 'New' });
+    spyOn(component, 'isFormUnchanged').and.returnValue(false);
+    component.saveOrUpdateCompanyEnrollment();
+    expect(mockAVSService.addOrUpdateCompanyEnrollment).toHaveBeenCalled();
+  });
+
+  it('should navigate to /avs/company-enrollment on cancel', () => {
+    component.cancel();
+    expect(mockRouter.navigate).toHaveBeenCalledWith(['/avs/company-enrollment']);
+  });
+
+  it('should navigate to company-enrollment on modal click', () => {
+    component._successModal = { hide: jasmine.createSpy('hide') } as any;
+    component.onNestedButtonClick();
+    expect(component._successModal.hide).toHaveBeenCalled();
+    expect(mockRouter.navigateByUrl).toHaveBeenCalledWith('avs/company-enrollment');
+  });
+});
