@@ -1,87 +1,123 @@
-package com.truist.fraud.autoconfiguration;
-
-import com.truist.cps.connector.RestConnector;
-import com.truist.cps.connector.RestConnectorFactory;
-import com.truist.fraud.client.FraudClient;
-import com.truist.fraud.config.FraudProperties;
-import com.truist.fraud.service.FraudServiceImpl;
-import com.truist.fraud.util.TokenizationUtil;
-import com.github.jknack.handlebars.Handlebars;
-import org.junit.jupiter.api.BeforeEach;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.MockedStatic;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.boot.autoconfigure.AutoConfigurations;
-import org.springframework.boot.test.context.runner.ApplicationContextRunner;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * ✅ Final version — no @MockBean, no duplicate FraudProperties, Boot 3.x safe.
- */
-@ExtendWith(MockitoExtension.class)
-class FraudServiceImplAutoConfigurationTest {
+public class JsonCleanerTest {
 
-    private ApplicationContextRunner contextRunner;
+    private static final ObjectMapper mapper = new ObjectMapper();
 
-    @BeforeEach
-    void setup() {
-        // 👇 This runner loads *only* our local config + target auto-config.
-        contextRunner = new ApplicationContextRunner()
-                .withUserConfiguration(TestOnlyConfig.class)
-                .withConfiguration(AutoConfigurations.of(FraudServiceImplAutoConfiguration.class));
-    }
+    @Test
+    void testRemoveNullField() throws Exception {
+        String input = """
+            {
+              "name": null,
+              "age": 30
+            }
+            """;
 
-    @Configuration
-    static class TestOnlyConfig {
-
-        @Bean
-        FraudProperties fraudProperties() {
-            FraudProperties props = new FraudProperties();
-            props.setUsername("testUser");
-            props.setPassword("testPass");
-            props.setBaseUrl("https://fraud.api.dev");
-            props.setFraudTemplatePath("src/test/resources/templates");
-            props.setFraudTemplateName("fraud-template");
-            props.setMtlsEnabled(false);
-            return props;
-        }
+        String result = JsonCleaner.cleanRenderedJson(input);
+        assertEquals("{\"age\":30}", result);
     }
 
     @Test
-    void shouldCreateFraudClient_whenMtlsDisabled() {
-        try (MockedStatic<RestConnectorFactory> factoryMock =
-                     mockStatic(RestConnectorFactory.class)) {
+    void testRemoveEmptyString() throws Exception {
+        String input = """
+            {
+              "name": "",
+              "age": 25
+            }
+            """;
 
-            RestConnector mockConnector = mock(RestConnector.class);
-            factoryMock.when(() ->
-                    RestConnectorFactory.createBasicAuthConnector(
-                            anyString(), anyString(), anyString()))
-                    .thenReturn(mockConnector);
-
-            contextRunner.run(context -> {
-                assertThat(context).hasSingleBean(FraudClient.class);
-                FraudClient fraudClient = context.getBean(FraudClient.class);
-                assertThat(fraudClient).isNotNull();
-
-                factoryMock.verify(() ->
-                        RestConnectorFactory.createBasicAuthConnector(
-                                eq("testUser"), eq("testPass"), eq("https://fraud.api.dev")));
-            });
-        }
+        String result = JsonCleaner.cleanRenderedJson(input);
+        assertEquals("{\"age\":25}", result);
     }
 
     @Test
-    void shouldCreateOtherBeansSuccessfully() {
-        contextRunner.run(context -> {
-            assertThat(context).hasSingleBean(Handlebars.class);
-            assertThat(context).hasSingleBean(TokenizationUtil.class);
-            assertThat(context).hasSingleBean(FraudServiceImpl.class);
-        });
+    void testRemoveEmptyObject() throws Exception {
+        String input = """
+            {
+              "account": {},
+              "status": "ACTIVE"
+            }
+            """;
+
+        String result = JsonCleaner.cleanRenderedJson(input);
+        assertEquals("{\"status\":\"ACTIVE\"}", result);
+    }
+
+    @Test
+    void testRemoveEmptyArray() throws Exception {
+        String input = """
+            {
+              "roles": [],
+              "active": true
+            }
+            """;
+
+        String result = JsonCleaner.cleanRenderedJson(input);
+        assertEquals("{\"active\":true}", result);
+    }
+
+    @Test
+    void testNestedCleanup() throws Exception {
+        String input = """
+            {
+              "user": {
+                "name": "",
+                "address": {
+                  "street": "",
+                  "city": null
+                }
+              },
+              "enabled": true
+            }
+            """;
+
+        String result = JsonCleaner.cleanRenderedJson(input);
+        assertEquals("{\"enabled\":true}", result);
+    }
+
+    @Test
+    void testEmptyRootBecomesEmptyObject() throws Exception {
+        String input = """
+            {
+              "a": null,
+              "b": "",
+              "c": [],
+              "d": {}
+            }
+            """;
+
+        String result = JsonCleaner.cleanRenderedJson(input);
+        assertEquals("{}", result);
+    }
+
+    @Test
+    void testKeepValidValues() throws Exception {
+        String input = """
+            {
+              "id": "123",
+              "age": 45,
+              "active": true
+            }
+            """;
+
+        String result = JsonCleaner.cleanRenderedJson(input);
+        assertEquals("{\"id\":\"123\",\"age\":45,\"active\":true}", result);
+    }
+
+    @Test
+    void testArrayWithMixedValues() throws Exception {
+        String input = """
+            {
+              "tags": ["", "valid", null, "test"]
+            }
+            """;
+
+        String result = JsonCleaner.cleanRenderedJson(input);
+        // Empty string and null removed → ["valid","test"]
+        assertEquals("{\"tags\":[\"valid\",\"test\"]}", result);
     }
 }
