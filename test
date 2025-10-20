@@ -20,7 +20,8 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * Final stable test for FraudServiceImplAutoConfiguration
+ * ✅ Works across Spring Boot 2.x–3.x.
+ * Overrides auto-registered FraudProperties bean to prevent duplicates.
  */
 @ExtendWith(MockitoExtension.class)
 class FraudServiceImplAutoConfigurationTest {
@@ -30,10 +31,7 @@ class FraudServiceImplAutoConfigurationTest {
     @BeforeEach
     void setup() {
         contextRunner = new ApplicationContextRunner()
-                // Disable any auto-registered FraudProperties beans
-                .withDisabledAutoConfigurations(FraudServiceImplAutoConfiguration.class)
                 .withPropertyValues("spring.main.allow-bean-definition-overriding=true")
-                // Load only this configuration
                 .withConfiguration(AutoConfigurations.of(FraudServiceImplAutoConfiguration.class));
     }
 
@@ -56,8 +54,8 @@ class FraudServiceImplAutoConfigurationTest {
                     .thenReturn(mockConnector);
 
             contextRunner
-                    // Only register this bean manually
-                    .withBean(FraudProperties.class, () -> props)
+                    // 👇 Use same bean name “fraudProperties” so Boot’s auto bean gets overridden
+                    .withBean("fraudProperties", FraudProperties.class, () -> props)
                     .run(context -> {
                         FraudClient fraudClient = context.getBean(FraudClient.class);
                         assertThat(fraudClient).isNotNull();
@@ -90,7 +88,8 @@ class FraudServiceImplAutoConfigurationTest {
                     .thenReturn(mockConnector);
 
             contextRunner
-                    .withBean(FraudProperties.class, () -> props)
+                    // 👇 Override bean name
+                    .withBean("fraudProperties", FraudProperties.class, () -> props)
                     .run(context -> {
                         FraudClient fraudClient = context.getBean(FraudClient.class);
                         assertThat(fraudClient).isNotNull();
@@ -113,7 +112,7 @@ class FraudServiceImplAutoConfigurationTest {
         props.setMtlsEnabled(false);
 
         contextRunner
-                .withBean(FraudProperties.class, () -> props)
+                .withBean("fraudProperties", FraudProperties.class, () -> props)
                 .run(context -> {
                     assertThat(context).hasSingleBean(Handlebars.class);
                     assertThat(context).hasSingleBean(TokenizationUtil.class);
