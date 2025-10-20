@@ -12,16 +12,18 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * ✅ Works across Spring Boot 2.x–3.x.
- * Overrides auto-registered FraudProperties bean to prevent duplicates.
+ * ✅ FINAL CLEAN TEST
+ * Isolates FraudServiceImplAutoConfiguration and ensures only one FraudProperties bean exists.
  */
 @ExtendWith(MockitoExtension.class)
 class FraudServiceImplAutoConfigurationTest {
@@ -30,66 +32,71 @@ class FraudServiceImplAutoConfigurationTest {
 
     @BeforeEach
     void setup() {
+        // ContextRunner that loads only the TestOnlyConfig + our auto configuration
         contextRunner = new ApplicationContextRunner()
-                .withPropertyValues("spring.main.allow-bean-definition-overriding=true")
-                .withConfiguration(AutoConfigurations.of(FraudServiceImplAutoConfiguration.class));
+                .withUserConfiguration(TestOnlyConfig.class);
+    }
+
+    // ⬇️ This is the missing inner class you need (inside the test)
+    @Configuration
+    @ImportAutoConfiguration(FraudServiceImplAutoConfiguration.class)
+    static class TestOnlyConfig {
+
+        @Bean
+        FraudProperties fraudProperties() {
+            FraudProperties props = new FraudProperties();
+            props.setUsername("testUser");
+            props.setPassword("testPass");
+            props.setBaseUrl("https://fraud.api.dev");
+            props.setFraudTemplatePath("src/test/resources/templates");
+            props.setFraudTemplateName("fraud-template");
+            props.setMtlsEnabled(false);
+            return props;
+        }
     }
 
     @Test
     void shouldCreateFraudClient_whenMtlsDisabled() {
-        FraudProperties props = new FraudProperties();
-        props.setUsername("testUser");
-        props.setPassword("testPass");
-        props.setBaseUrl("https://fraud.api.dev");
-        props.setFraudTemplatePath("src/test/resources/templates");
-        props.setFraudTemplateName("fraud-template");
-        props.setMtlsEnabled(false);
-
         try (MockedStatic<RestConnectorFactory> factoryMock = mockStatic(RestConnectorFactory.class)) {
             RestConnector mockConnector = mock(RestConnector.class);
-
             factoryMock.when(() ->
                     RestConnectorFactory.createBasicAuthConnector(
                             anyString(), anyString(), anyString()))
                     .thenReturn(mockConnector);
 
-            contextRunner
-                    // 👇 Use same bean name “fraudProperties” so Boot’s auto bean gets overridden
-                    .withBean("fraudProperties", FraudProperties.class, () -> props)
-                    .run(context -> {
-                        FraudClient fraudClient = context.getBean(FraudClient.class);
-                        assertThat(fraudClient).isNotNull();
+            contextRunner.run(context -> {
+                FraudClient fraudClient = context.getBean(FraudClient.class);
+                assertThat(fraudClient).isNotNull();
 
-                        factoryMock.verify(() ->
-                                RestConnectorFactory.createBasicAuthConnector(
-                                        eq("testUser"), eq("testPass"), eq("https://fraud.api.dev")));
-                    });
+                factoryMock.verify(() ->
+                        RestConnectorFactory.createBasicAuthConnector(
+                                eq("testUser"), eq("testPass"), eq("https://fraud.api.dev")));
+            });
         }
     }
 
     @Test
     void shouldCreateFraudClient_whenMtlsEnabled() {
-        FraudProperties props = new FraudProperties();
-        props.setUsername("testUser");
-        props.setPassword("testPass");
-        props.setBaseUrl("https://fraud.api.dev");
-        props.setKeyStorePath("classpath:keystore.jks");
-        props.setKeyStorePassword("secret");
-        props.setTrustStorePath("classpath:truststore.jks");
-        props.setTrustStorePassword("secret");
-        props.setMtlsEnabled(true);
-
         try (MockedStatic<RestConnectorFactory> factoryMock = mockStatic(RestConnectorFactory.class)) {
             RestConnector mockConnector = mock(RestConnector.class);
-
             factoryMock.when(() ->
                     RestConnectorFactory.createBasicAuthConnector(
                             anyString(), anyString(), anyString(), any()))
                     .thenReturn(mockConnector);
 
             contextRunner
-                    // 👇 Override bean name
-                    .withBean("fraudProperties", FraudProperties.class, () -> props)
+                    .withBean(FraudProperties.class, () -> {
+                        FraudProperties props = new FraudProperties();
+                        props.setUsername("testUser");
+                        props.setPassword("testPass");
+                        props.setBaseUrl("https://fraud.api.dev");
+                        props.setKeyStorePath("classpath:keystore.jks");
+                        props.setKeyStorePassword("secret");
+                        props.setTrustStorePath("classpath:truststore.jks");
+                        props.setTrustStorePassword("secret");
+                        props.setMtlsEnabled(true);
+                        return props;
+                    })
                     .run(context -> {
                         FraudClient fraudClient = context.getBean(FraudClient.class);
                         assertThat(fraudClient).isNotNull();
@@ -103,20 +110,10 @@ class FraudServiceImplAutoConfigurationTest {
 
     @Test
     void shouldCreateOtherBeansSuccessfully() {
-        FraudProperties props = new FraudProperties();
-        props.setUsername("testUser");
-        props.setPassword("testPass");
-        props.setBaseUrl("https://fraud.api.dev");
-        props.setFraudTemplatePath("src/test/resources/templates");
-        props.setFraudTemplateName("fraud-template");
-        props.setMtlsEnabled(false);
-
-        contextRunner
-                .withBean("fraudProperties", FraudProperties.class, () -> props)
-                .run(context -> {
-                    assertThat(context).hasSingleBean(Handlebars.class);
-                    assertThat(context).hasSingleBean(TokenizationUtil.class);
-                    assertThat(context).hasSingleBean(FraudServiceImpl.class);
-                });
+        contextRunner.run(context -> {
+            assertThat(context).hasSingleBean(Handlebars.class);
+            assertThat(context).hasSingleBean(TokenizationUtil.class);
+            assertThat(context).hasSingleBean(FraudServiceImpl.class);
+        });
     }
 }
