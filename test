@@ -1,9 +1,9 @@
-package com.truist.fraud.config;
+package com.truist.fraud.autoconfiguration;
 
 import com.truist.cps.connector.RestConnector;
 import com.truist.cps.connector.RestConnectorFactory;
 import com.truist.fraud.client.FraudClient;
-import com.truist.fraud.model.FraudProperties;
+import com.truist.fraud.config.FraudProperties;
 import com.truist.fraud.service.FraudServiceImpl;
 import com.truist.fraud.util.TokenizationUtil;
 import com.github.jknack.handlebars.Handlebars;
@@ -25,77 +25,98 @@ class FraudServiceImplAutoConfigurationTest {
 
     @BeforeEach
     void setup() {
+        // Base context setup allowing override of auto-created beans
         contextRunner = new ApplicationContextRunner()
-                .withUserConfiguration(FraudServiceImplAutoConfiguration.class)
-                .withBean(FraudProperties.class, () -> {
-                    FraudProperties props = new FraudProperties();
-                    props.setUsername("testUser");
-                    props.setPassword("testPass");
-                    props.setBaseUrl("https://fraud.api.dev");
-                    props.setFraudTemplatePath("src/test/resources/templates");
-                    props.setFraudTemplateName("fraud-template");
-                    props.setMtlsEnabled(false); // test non-mTLS branch
-                    return props;
-                });
+                .withPropertyValues("spring.main.allow-bean-definition-overriding=true")
+                .withUserConfiguration(FraudServiceImplAutoConfiguration.class);
     }
 
     @Test
     void shouldCreateFraudClient_whenMtlsDisabled() {
+        // Create non-mTLS FraudProperties
+        FraudProperties props = new FraudProperties();
+        props.setUsername("testUser");
+        props.setPassword("testPass");
+        props.setBaseUrl("https://fraud.api.dev");
+        props.setFraudTemplatePath("src/test/resources/templates");
+        props.setFraudTemplateName("fraud-template");
+        props.setMtlsEnabled(false);
+
         try (MockedStatic<RestConnectorFactory> factoryMock = mockStatic(RestConnectorFactory.class)) {
             RestConnector mockConnector = mock(RestConnector.class);
+
+            // Mock static factory call
             factoryMock.when(() ->
                     RestConnectorFactory.createBasicAuthConnector(
                             anyString(), anyString(), anyString()))
                     .thenReturn(mockConnector);
 
-            contextRunner.run(context -> {
-                FraudClient fraudClient = context.getBean(FraudClient.class);
-                assertThat(fraudClient).isNotNull();
-                factoryMock.verify(() ->
-                        RestConnectorFactory.createBasicAuthConnector(
-                                eq("testUser"), eq("testPass"), eq("https://fraud.api.dev")));
-            });
+            contextRunner
+                    .withBean(FraudProperties.class, () -> props)
+                    .run(context -> {
+                        FraudClient fraudClient = context.getBean(FraudClient.class);
+                        assertThat(fraudClient).isNotNull();
+
+                        // Verify correct RestConnectorFactory call
+                        factoryMock.verify(() ->
+                                RestConnectorFactory.createBasicAuthConnector(
+                                        eq("testUser"), eq("testPass"), eq("https://fraud.api.dev")));
+                    });
         }
     }
 
     @Test
     void shouldCreateFraudClient_whenMtlsEnabled() {
-        contextRunner = contextRunner.withBean(FraudProperties.class, () -> {
-            FraudProperties props = new FraudProperties();
-            props.setUsername("testUser");
-            props.setPassword("testPass");
-            props.setBaseUrl("https://fraud.api.dev");
-            props.setKeyStorePath("classpath:keystore.jks");
-            props.setKeyStorePassword("secret");
-            props.setTrustStorePath("classpath:truststore.jks");
-            props.setTrustStorePassword("secret");
-            props.setMtlsEnabled(true);
-            return props;
-        });
+        // Create mTLS FraudProperties
+        FraudProperties props = new FraudProperties();
+        props.setUsername("testUser");
+        props.setPassword("testPass");
+        props.setBaseUrl("https://fraud.api.dev");
+        props.setKeyStorePath("classpath:keystore.jks");
+        props.setKeyStorePassword("secret");
+        props.setTrustStorePath("classpath:truststore.jks");
+        props.setTrustStorePassword("secret");
+        props.setMtlsEnabled(true);
 
         try (MockedStatic<RestConnectorFactory> factoryMock = mockStatic(RestConnectorFactory.class)) {
             RestConnector mockConnector = mock(RestConnector.class);
+
+            // Mock static factory call for mTLS
             factoryMock.when(() ->
                     RestConnectorFactory.createBasicAuthConnector(
                             anyString(), anyString(), anyString(), any()))
                     .thenReturn(mockConnector);
 
-            contextRunner.run(context -> {
-                FraudClient fraudClient = context.getBean(FraudClient.class);
-                assertThat(fraudClient).isNotNull();
-                factoryMock.verify(() ->
-                        RestConnectorFactory.createBasicAuthConnector(
-                                eq("testUser"), eq("testPass"), eq("https://fraud.api.dev"), any()));
-            });
+            contextRunner
+                    .withBean(FraudProperties.class, () -> props)
+                    .run(context -> {
+                        FraudClient fraudClient = context.getBean(FraudClient.class);
+                        assertThat(fraudClient).isNotNull();
+
+                        // Verify mTLS connector was created correctly
+                        factoryMock.verify(() ->
+                                RestConnectorFactory.createBasicAuthConnector(
+                                        eq("testUser"), eq("testPass"), eq("https://fraud.api.dev"), any()));
+                    });
         }
     }
 
     @Test
     void shouldCreateOtherBeansSuccessfully() {
-        contextRunner.run(context -> {
-            assertThat(context.getBean(Handlebars.class)).isNotNull();
-            assertThat(context.getBean(TokenizationUtil.class)).isNotNull();
-            assertThat(context.getBean(FraudServiceImpl.class)).isNotNull();
-        });
+        FraudProperties props = new FraudProperties();
+        props.setUsername("testUser");
+        props.setPassword("testPass");
+        props.setBaseUrl("https://fraud.api.dev");
+        props.setFraudTemplatePath("src/test/resources/templates");
+        props.setFraudTemplateName("fraud-template");
+        props.setMtlsEnabled(false);
+
+        contextRunner
+                .withBean(FraudProperties.class, () -> props)
+                .run(context -> {
+                    assertThat(context).hasSingleBean(Handlebars.class);
+                    assertThat(context).hasSingleBean(TokenizationUtil.class);
+                    assertThat(context).hasSingleBean(FraudServiceImpl.class);
+                });
     }
 }
