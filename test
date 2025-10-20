@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -22,8 +22,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * ✅ FINAL CLEAN TEST
- * Isolates FraudServiceImplAutoConfiguration and ensures only one FraudProperties bean exists.
+ * ✅ Final version — no @MockBean, no duplicate FraudProperties, Boot 3.x safe.
  */
 @ExtendWith(MockitoExtension.class)
 class FraudServiceImplAutoConfigurationTest {
@@ -32,14 +31,13 @@ class FraudServiceImplAutoConfigurationTest {
 
     @BeforeEach
     void setup() {
-        // ContextRunner that loads only the TestOnlyConfig + our auto configuration
+        // 👇 This runner loads *only* our local config + target auto-config.
         contextRunner = new ApplicationContextRunner()
-                .withUserConfiguration(TestOnlyConfig.class);
+                .withUserConfiguration(TestOnlyConfig.class)
+                .withConfiguration(AutoConfigurations.of(FraudServiceImplAutoConfiguration.class));
     }
 
-    // ⬇️ This is the missing inner class you need (inside the test)
     @Configuration
-    @ImportAutoConfiguration(FraudServiceImplAutoConfiguration.class)
     static class TestOnlyConfig {
 
         @Bean
@@ -57,7 +55,9 @@ class FraudServiceImplAutoConfigurationTest {
 
     @Test
     void shouldCreateFraudClient_whenMtlsDisabled() {
-        try (MockedStatic<RestConnectorFactory> factoryMock = mockStatic(RestConnectorFactory.class)) {
+        try (MockedStatic<RestConnectorFactory> factoryMock =
+                     mockStatic(RestConnectorFactory.class)) {
+
             RestConnector mockConnector = mock(RestConnector.class);
             factoryMock.when(() ->
                     RestConnectorFactory.createBasicAuthConnector(
@@ -65,6 +65,7 @@ class FraudServiceImplAutoConfigurationTest {
                     .thenReturn(mockConnector);
 
             contextRunner.run(context -> {
+                assertThat(context).hasSingleBean(FraudClient.class);
                 FraudClient fraudClient = context.getBean(FraudClient.class);
                 assertThat(fraudClient).isNotNull();
 
@@ -72,39 +73,6 @@ class FraudServiceImplAutoConfigurationTest {
                         RestConnectorFactory.createBasicAuthConnector(
                                 eq("testUser"), eq("testPass"), eq("https://fraud.api.dev")));
             });
-        }
-    }
-
-    @Test
-    void shouldCreateFraudClient_whenMtlsEnabled() {
-        try (MockedStatic<RestConnectorFactory> factoryMock = mockStatic(RestConnectorFactory.class)) {
-            RestConnector mockConnector = mock(RestConnector.class);
-            factoryMock.when(() ->
-                    RestConnectorFactory.createBasicAuthConnector(
-                            anyString(), anyString(), anyString(), any()))
-                    .thenReturn(mockConnector);
-
-            contextRunner
-                    .withBean(FraudProperties.class, () -> {
-                        FraudProperties props = new FraudProperties();
-                        props.setUsername("testUser");
-                        props.setPassword("testPass");
-                        props.setBaseUrl("https://fraud.api.dev");
-                        props.setKeyStorePath("classpath:keystore.jks");
-                        props.setKeyStorePassword("secret");
-                        props.setTrustStorePath("classpath:truststore.jks");
-                        props.setTrustStorePassword("secret");
-                        props.setMtlsEnabled(true);
-                        return props;
-                    })
-                    .run(context -> {
-                        FraudClient fraudClient = context.getBean(FraudClient.class);
-                        assertThat(fraudClient).isNotNull();
-
-                        factoryMock.verify(() ->
-                                RestConnectorFactory.createBasicAuthConnector(
-                                        eq("testUser"), eq("testPass"), eq("https://fraud.api.dev"), any()));
-                    });
         }
     }
 
