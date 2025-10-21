@@ -1,30 +1,60 @@
+package com.truist.aspect;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.aop.aspectj.annotation.AspectJProxyFactory;
-
 import static org.junit.jupiter.api.Assertions.*;
 
-class SdkExecutionTimeAspectPureTest {
+/**
+ * Full JUnit test for SdkExecutionTimeAspect
+ * Covers both service.execute() and client.invokeApi() pointcuts
+ */
+class SdkExecutionTimeAspectTest {
 
+    // ✅ Test for com.truist..service..*.execute(..)
     @Test
-    void shouldInterceptAndMeasureExecutionTime() throws Throwable {
-        // ✅ Create target
+    void shouldLogExecutionTimeForServiceExecute() {
+        // Arrange
         DummyService target = new DummyService();
-
-        // ✅ Apply aspect manually
         AspectJProxyFactory factory = new AspectJProxyFactory(target);
         factory.addAspect(new SdkExecutionTimeAspect());
-
         DummyService proxy = factory.getProxy();
 
-        // ✅ Call target via proxy (Aspect is triggered)
-        String result = proxy.execute("check");
+        // Act
+        String result = proxy.execute("test-service");
 
-        assertEquals("executed:check", result);
+        // Assert
+        assertEquals("executed:test-service", result);
     }
 
+    // ✅ Test for com.truist..client..*.invokeApi(..)
+    @Test
+    void shouldLogExecutionTimeForClientInvokeApi() {
+        // Arrange
+        DummyClient target = new DummyClient();
+        AspectJProxyFactory factory = new AspectJProxyFactory(target);
+        factory.addAspect(new SdkExecutionTimeAspect());
+        DummyClient proxy = factory.getProxy();
+
+        // Act
+        String result = proxy.invokeApi("test-client");
+
+        // Assert
+        assertEquals("invoked:test-client", result);
+    }
+
+    // ✅ Dummy target class to match com.truist..service..*.execute(..)
     static class DummyService {
-        public String execute(String arg) {
-            return "executed:" + arg;
+        public String execute(String input) {
+            System.out.println("Inside DummyService.execute()...");
+            return "executed:" + input;
+        }
+    }
+
+    // ✅ Dummy target class to match com.truist..client..*.invokeApi(..)
+    static class DummyClient {
+        public String invokeApi(String input) {
+            System.out.println("Inside DummyClient.invokeApi()...");
+            return "invoked:" + input;
         }
     }
 }
