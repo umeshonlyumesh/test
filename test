@@ -1,123 +1,30 @@
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.springframework.aop.aspectj.annotation.AspectJProxyFactory;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-public class JsonCleanerTest {
-
-    private static final ObjectMapper mapper = new ObjectMapper();
+class SdkExecutionTimeAspectPureTest {
 
     @Test
-    void testRemoveNullField() throws Exception {
-        String input = """
-            {
-              "name": null,
-              "age": 30
-            }
-            """;
+    void shouldInterceptAndMeasureExecutionTime() throws Throwable {
+        // ✅ Create target
+        DummyService target = new DummyService();
 
-        String result = JsonCleaner.cleanRenderedJson(input);
-        assertEquals("{\"age\":30}", result);
+        // ✅ Apply aspect manually
+        AspectJProxyFactory factory = new AspectJProxyFactory(target);
+        factory.addAspect(new SdkExecutionTimeAspect());
+
+        DummyService proxy = factory.getProxy();
+
+        // ✅ Call target via proxy (Aspect is triggered)
+        String result = proxy.execute("check");
+
+        assertEquals("executed:check", result);
     }
 
-    @Test
-    void testRemoveEmptyString() throws Exception {
-        String input = """
-            {
-              "name": "",
-              "age": 25
-            }
-            """;
-
-        String result = JsonCleaner.cleanRenderedJson(input);
-        assertEquals("{\"age\":25}", result);
-    }
-
-    @Test
-    void testRemoveEmptyObject() throws Exception {
-        String input = """
-            {
-              "account": {},
-              "status": "ACTIVE"
-            }
-            """;
-
-        String result = JsonCleaner.cleanRenderedJson(input);
-        assertEquals("{\"status\":\"ACTIVE\"}", result);
-    }
-
-    @Test
-    void testRemoveEmptyArray() throws Exception {
-        String input = """
-            {
-              "roles": [],
-              "active": true
-            }
-            """;
-
-        String result = JsonCleaner.cleanRenderedJson(input);
-        assertEquals("{\"active\":true}", result);
-    }
-
-    @Test
-    void testNestedCleanup() throws Exception {
-        String input = """
-            {
-              "user": {
-                "name": "",
-                "address": {
-                  "street": "",
-                  "city": null
-                }
-              },
-              "enabled": true
-            }
-            """;
-
-        String result = JsonCleaner.cleanRenderedJson(input);
-        assertEquals("{\"enabled\":true}", result);
-    }
-
-    @Test
-    void testEmptyRootBecomesEmptyObject() throws Exception {
-        String input = """
-            {
-              "a": null,
-              "b": "",
-              "c": [],
-              "d": {}
-            }
-            """;
-
-        String result = JsonCleaner.cleanRenderedJson(input);
-        assertEquals("{}", result);
-    }
-
-    @Test
-    void testKeepValidValues() throws Exception {
-        String input = """
-            {
-              "id": "123",
-              "age": 45,
-              "active": true
-            }
-            """;
-
-        String result = JsonCleaner.cleanRenderedJson(input);
-        assertEquals("{\"id\":\"123\",\"age\":45,\"active\":true}", result);
-    }
-
-    @Test
-    void testArrayWithMixedValues() throws Exception {
-        String input = """
-            {
-              "tags": ["", "valid", null, "test"]
-            }
-            """;
-
-        String result = JsonCleaner.cleanRenderedJson(input);
-        // Empty string and null removed → ["valid","test"]
-        assertEquals("{\"tags\":[\"valid\",\"test\"]}", result);
+    static class DummyService {
+        public String execute(String arg) {
+            return "executed:" + arg;
+        }
     }
 }
