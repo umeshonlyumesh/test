@@ -1,60 +1,28 @@
-package com.truist.aspect;
+package com.truist.kafka.config;
 
+import com.truist.kafka.admin.KafkaTopicManager;
+import com.truist.kafka.consumer.KafkaListenerInitializer;
+import com.truist.kafka.producer.KafkaProducerClient;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
-import org.springframework.aop.aspectj.annotation.AspectJProxyFactory;
-import static org.junit.jupiter.api.Assertions.*;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
-/**
- * Full JUnit test for SdkExecutionTimeAspect
- * Covers both service.execute() and client.invokeApi() pointcuts
- */
-class SdkExecutionTimeAspectTest {
+import static org.assertj.core.api.Assertions.assertThat;
 
-    // ✅ Test for com.truist..service..*.execute(..)
+class KafkaSdkAutoConfigurationTest {
+
+    private final ApplicationContextRunner runner = new ApplicationContextRunner()
+            .withUserConfiguration(KafkaSdkAutoConfiguration.class)
+            .withBean(SimpleMeterRegistry.class)
+            .withPropertyValues("kafka.sdk.bootstrap-servers=localhost:9092");
+
     @Test
-    void shouldLogExecutionTimeForServiceExecute() {
-        // Arrange
-        DummyService target = new DummyService();
-        AspectJProxyFactory factory = new AspectJProxyFactory(target);
-        factory.addAspect(new SdkExecutionTimeAspect());
-        DummyService proxy = factory.getProxy();
-
-        // Act
-        String result = proxy.execute("test-service");
-
-        // Assert
-        assertEquals("executed:test-service", result);
-    }
-
-    // ✅ Test for com.truist..client..*.invokeApi(..)
-    @Test
-    void shouldLogExecutionTimeForClientInvokeApi() {
-        // Arrange
-        DummyClient target = new DummyClient();
-        AspectJProxyFactory factory = new AspectJProxyFactory(target);
-        factory.addAspect(new SdkExecutionTimeAspect());
-        DummyClient proxy = factory.getProxy();
-
-        // Act
-        String result = proxy.invokeApi("test-client");
-
-        // Assert
-        assertEquals("invoked:test-client", result);
-    }
-
-    // ✅ Dummy target class to match com.truist..service..*.execute(..)
-    static class DummyService {
-        public String execute(String input) {
-            System.out.println("Inside DummyService.execute()...");
-            return "executed:" + input;
-        }
-    }
-
-    // ✅ Dummy target class to match com.truist..client..*.invokeApi(..)
-    static class DummyClient {
-        public String invokeApi(String input) {
-            System.out.println("Inside DummyClient.invokeApi()...");
-            return "invoked:" + input;
-        }
+    void shouldLoadAllKafkaBeans() {
+        runner.run(ctx -> {
+            assertThat(ctx).hasSingleBean(KafkaSdkProperties.class);
+            assertThat(ctx).hasSingleBean(KafkaTopicManager.class);
+            assertThat(ctx).hasSingleBean(KafkaProducerClient.class);
+            assertThat(ctx).hasSingleBean(KafkaListenerInitializer.class);
+        });
     }
 }
