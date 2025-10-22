@@ -1,28 +1,95 @@
-package com.truist.kafka.config;
+package com.truist.fraud.config;
 
-import com.truist.kafka.admin.KafkaTopicManager;
-import com.truist.kafka.consumer.KafkaListenerInitializer;
-import com.truist.kafka.producer.KafkaProducerClient;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import com.truist.fraud.client.FraudClient;
+import com.truist.fraud.service.FraudServiceImpl;
+import com.truist.protegrity.ProtegrityProperties;
+import com.truist.tokenization.TokenizationUtil;
+import com.truist.fraud.props.FraudProperties;
+import com.truist.rest.RestConnector;
+import com.truist.rest.RestConnectorFactory;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
-class KafkaSdkAutoConfigurationTest {
+class FraudServiceImplAutoConfigurationTest {
 
-    private final ApplicationContextRunner runner = new ApplicationContextRunner()
-            .withUserConfiguration(KafkaSdkAutoConfiguration.class)
-            .withBean(SimpleMeterRegistry.class)
-            .withPropertyValues("kafka.sdk.bootstrap-servers=localhost:9092");
+    private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
+            .withUserConfiguration(FraudServiceImplAutoConfiguration.class)
+            .withBean(FraudProperties.class)
+            .withBean(ProtegrityProperties.class)
+            .withBean(ObjectMapper.class);
+
+    @BeforeEach
+    void setup() {
+        System.setProperty("fraud.username", "testuser");
+        System.setProperty("fraud.password", "secret");
+    }
 
     @Test
-    void shouldLoadAllKafkaBeans() {
-        runner.run(ctx -> {
-            assertThat(ctx).hasSingleBean(KafkaSdkProperties.class);
-            assertThat(ctx).hasSingleBean(KafkaTopicManager.class);
-            assertThat(ctx).hasSingleBean(KafkaProducerClient.class);
-            assertThat(ctx).hasSingleBean(KafkaListenerInitializer.class);
+    void contextLoadsAndBeansAreCreated() {
+        contextRunner.run(ctx -> {
+            assertThat(ctx).hasSingleBean(FraudServiceImplAutoConfiguration.class);
         });
+    }
+
+    @Test
+    void shouldCreateFraudClientWhenSslEnabled() throws Exception {
+        FraudProperties props = new FraudProperties();
+        props.setSslEnabled(true);
+        props.setBaseUrl("https://fraud/api");
+        props.setUsername("user");
+        props.setPassword("pwd");
+
+        RestConnector mockConnector = mock(RestConnector.class);
+
+        try (MockedStatic<RestConnectorFactory> factory = Mockito.mockStatic(RestConnectorFactory.class)) {
+            factory.when(() -> RestConnectorFactory.createBasicAuthConnector(anyString(), anyString(), anyString(), any()))
+                   .thenReturn(mockConnector);
+
+            FraudServiceImplAutoConfiguration cfg = new FraudServiceImplAutoConfiguration();
+            FraudClient client = cfg.fraudClient(props);
+            assertThat(client).isNotNull();
+        }
+    }
+
+    @Test
+    void shouldCreateFraudClientWithoutSsl() throws Exception {
+        FraudProperties props = new FraudProperties();
+        props.setSslEnabled(false);
+        props.setBaseUrl("http://fraud/api");
+        props.setUsername("user");
+        props.setPassword("pwd");
+
+        RestConnector mockConnector = mock(RestConnector.class);
+        try (MockedStatic<RestConnectorFactory> factory = Mockito.mockStatic(RestConnectorFactory.class)) {
+            factory.when(() -> RestConnectorFactory.createBasicAuthConnector(anyString(), anyString(), anyString(), any()))
+                   .thenReturn(mockConnector);
+
+            FraudServiceImplAutoConfiguration cfg = new FraudServiceImplAutoConfiguration();
+            FraudClient client = cfg.fraudClient(props);
+            assertThat(client).isNotNull();
+        }
+    }
+
+    @Test
+    void shouldCreateFraudServiceImplBean() throws Exception {
+        FraudProperties props = new FraudProperties();
+        props.setFraudTemplateName("test-template");
+
+        var mapper = new ObjectMapper();
+        var client = mock(FraudClient.class);
+        var tokenUtil = mock(TokenizationUtil.class);
+        var template = mock(com.github.jknack.handlebars.Template.class);
+
+        FraudServiceImplAutoConfiguration cfg = new FraudServiceImplAutoConfiguration();
+        FraudServiceImpl svc = cfg.fraudServiceImpl(template, mapper, client, tokenUtil);
+        assertThat(svc).isNotNull();
     }
 }
