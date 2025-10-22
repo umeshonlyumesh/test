@@ -1,95 +1,124 @@
-package com.truist.fraud.config;
+package com.truist.fraud.service;
 
-import com.truist.fraud.client.FraudClient;
-import com.truist.fraud.service.FraudServiceImpl;
-import com.truist.protegrity.ProtegrityProperties;
-import com.truist.tokenization.TokenizationUtil;
-import com.truist.fraud.props.FraudProperties;
-import com.truist.rest.RestConnector;
-import com.truist.rest.RestConnectorFactory;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.truist.fraud.client.FraudClient;
+import com.truist.fraud.model.*;
+import com.truist.fraud.util.TokenizationUtil;
+import com.truist.sdk.exception.SdkException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.MockedStatic;
-import org.mockito.Mockito;
-import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.mockito.*;
+import org.springframework.ui.freemarker.FreeMarkerTemplateUtils;
+import freemarker.template.Template;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.*;
+import java.net.SocketTimeoutException;
+import java.util.*;
+
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-class FraudServiceImplAutoConfigurationTest {
+class FraudServiceImplTest {
 
-    private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
-            .withUserConfiguration(FraudServiceImplAutoConfiguration.class)
-            .withBean(FraudProperties.class)
-            .withBean(ProtegrityProperties.class)
-            .withBean(ObjectMapper.class);
+    @Mock
+    private ObjectMapper objectMapper;
+
+    @Mock
+    private FraudClient fraudClient;
+
+    @Mock
+    private Template template;
+
+    @Mock
+    private TokenizationUtil tokenizationUtil;
+
+    @InjectMocks
+    private FraudServiceImpl fraudService;
 
     @BeforeEach
     void setup() {
-        System.setProperty("fraud.username", "testuser");
-        System.setProperty("fraud.password", "secret");
+        MockitoAnnotations.openMocks(this);
     }
 
     @Test
-    void contextLoadsAndBeansAreCreated() {
-        contextRunner.run(ctx -> {
-            assertThat(ctx).hasSingleBean(FraudServiceImplAutoConfiguration.class);
-        });
+    void execute_shouldReturnSuccessResponse_whenFraudClientSucceeds() throws Exception {
+        // given
+        FraudRequest fraudRequest = new FraudRequest();
+        fraudRequest.setParameters(List.of(
+                new Parameter("TRX_MONITORED_ACCOUNT_NUMBER", "1111"),
+                new Parameter("transactionKey", "TXN123")
+        ));
+
+        // Mock tokenization behavior
+        when(tokenizationUtil.detokenize(anyList()))
+                .thenReturn(List.of("DETOK-1111"));
+
+        // Mock template render
+        when(template.apply(any())).thenReturn("{ \"sample\": \"json\" }");
+
+        // Mock objectMapper to parse clean JSON into IfmxRequest
+        IfmxRequest ifmxRequest = new IfmxRequest();
+        when(objectMapper.readValue(anyString(), eq(IfmxRequest.class)))
+                .thenReturn(ifmxRequest);
+
+        // Mock FraudClient API success
+        RestResponse<FraudResponse> mockRestResponse = new RestResponse<>();
+        mockRestResponse.setBody(new FraudResponse("0", "SUCCESS"));
+        mockRestResponse.setSuccessful(true);
+
+        when(fraudClient.invokeApi(any(IfmxRequest.class)))
+                .thenReturn(mockRestResponse);
+
+        // when
+        FraudResponse result = fraudService.execute(fraudRequest);
+
+        // then
+        assertNotNull(result);
+        assertEquals("SUCCESS", result.getMessage());
+        assertEquals("0", result.getReturnCode());
+        verify(fraudClient, times(1)).invokeApi(any(IfmxRequest.class));
     }
 
     @Test
-    void shouldCreateFraudClientWhenSslEnabled() throws Exception {
-        FraudProperties props = new FraudProperties();
-        props.setSslEnabled(true);
-        props.setBaseUrl("https://fraud/api");
-        props.setUsername("user");
-        props.setPassword("pwd");
+    void execute_shouldThrowSdkException_whenFraudClientFails() throws Exception {
+        // given
+        FraudRequest fraudRequest = new FraudRequest();
+        fraudRequest.setParameters(List.of(
+                new Parameter("TRX_MONITORED_ACCOUNT_NUMBER", "2222")
+        ));
 
-        RestConnector mockConnector = mock(RestConnector.class);
+        when(tokenizationUtil.detokenize(anyList()))
+                .thenReturn(List.of("DETOK-2222"));
 
-        try (MockedStatic<RestConnectorFactory> factory = Mockito.mockStatic(RestConnectorFactory.class)) {
-            factory.when(() -> RestConnectorFactory.createBasicAuthConnector(anyString(), anyString(), anyString(), any()))
-                   .thenReturn(mockConnector);
+        when(template.apply(any())).thenReturn("{ \"sample\": \"json\" }");
+        when(objectMapper.readValue(anyString(), eq(IfmxRequest.class)))
+                .thenReturn(new IfmxRequest());
 
-            FraudServiceImplAutoConfiguration cfg = new FraudServiceImplAutoConfiguration();
-            FraudClient client = cfg.fraudClient(props);
-            assertThat(client).isNotNull();
-        }
+        // Mock FraudClient API failure
+        RestResponse<FraudResponse> errorResponse = new RestResponse<>();
+        errorResponse.setSuccessful(false);
+        errorResponse.setBody(new FraudResponse("4", "FAIL"));
+        when(fraudClient.invokeApi(any())).thenReturn(errorResponse);
+
+        // when + then
+        assertThrows(SdkException.class, () -> fraudService.execute(fraudRequest));
     }
 
     @Test
-    void shouldCreateFraudClientWithoutSsl() throws Exception {
-        FraudProperties props = new FraudProperties();
-        props.setSslEnabled(false);
-        props.setBaseUrl("http://fraud/api");
-        props.setUsername("user");
-        props.setPassword("pwd");
+    void execute_shouldThrowTimeoutException() throws Exception {
+        // given
+        FraudRequest fraudRequest = new FraudRequest();
+        fraudRequest.setParameters(List.of(new Parameter("TRX_MONITORED_ACCOUNT_NUMBER", "3333")));
 
-        RestConnector mockConnector = mock(RestConnector.class);
-        try (MockedStatic<RestConnectorFactory> factory = Mockito.mockStatic(RestConnectorFactory.class)) {
-            factory.when(() -> RestConnectorFactory.createBasicAuthConnector(anyString(), anyString(), anyString(), any()))
-                   .thenReturn(mockConnector);
+        when(tokenizationUtil.detokenize(anyList()))
+                .thenReturn(List.of("DETOK-3333"));
+        when(template.apply(any())).thenReturn("{ \"sample\": \"json\" }");
+        when(objectMapper.readValue(anyString(), eq(IfmxRequest.class)))
+                .thenReturn(new IfmxRequest());
 
-            FraudServiceImplAutoConfiguration cfg = new FraudServiceImplAutoConfiguration();
-            FraudClient client = cfg.fraudClient(props);
-            assertThat(client).isNotNull();
-        }
-    }
+        // Mock a timeout
+        when(fraudClient.invokeApi(any())).thenThrow(new SocketTimeoutException("Timeout"));
 
-    @Test
-    void shouldCreateFraudServiceImplBean() throws Exception {
-        FraudProperties props = new FraudProperties();
-        props.setFraudTemplateName("test-template");
-
-        var mapper = new ObjectMapper();
-        var client = mock(FraudClient.class);
-        var tokenUtil = mock(TokenizationUtil.class);
-        var template = mock(com.github.jknack.handlebars.Template.class);
-
-        FraudServiceImplAutoConfiguration cfg = new FraudServiceImplAutoConfiguration();
-        FraudServiceImpl svc = cfg.fraudServiceImpl(template, mapper, client, tokenUtil);
-        assertThat(svc).isNotNull();
+        // when + then
+        assertThrows(SdkException.class, () -> fraudService.execute(fraudRequest));
     }
 }
