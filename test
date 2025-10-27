@@ -1,124 +1,149 @@
-package com.truist.fraud.service;
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.truist.fraud.client.FraudClient;
-import com.truist.fraud.model.*;
-import com.truist.fraud.util.TokenizationUtil;
-import com.truist.sdk.exception.SdkException;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.*;
-import org.springframework.ui.freemarker.FreeMarkerTemplateUtils;
-import freemarker.template.Template;
+    <modelVersion>4.0.0</modelVersion>
 
-import java.net.SocketTimeoutException;
-import java.util.*;
+    <groupId>com.truist.fraud</groupId>
+    <artifactId>fraud-core-sdk</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+    <name>fraud-core-sdk</name>
+    <description>Starter SDK for Fraud (IFMX)</description>
 
-class FraudServiceImplTest {
+    <properties>
+        <java.version>21</java.version>
+        <spring.boot.version>3.3.5</spring.boot.version>
+        <maven.compiler.source>${java.version}</maven.compiler.source>
+        <maven.compiler.target>${java.version}</maven.compiler.target>
 
-    @Mock
-    private ObjectMapper objectMapper;
+        <jacoco.version>0.8.12</jacoco.version>
+        <sonar.maven.plugin.version>3.10.0.2594</sonar.maven.plugin.version>
 
-    @Mock
-    private FraudClient fraudClient;
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
 
-    @Mock
-    private Template template;
+    <dependencies>
 
-    @Mock
-    private TokenizationUtil tokenizationUtil;
+        <!-- Spring Boot core -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
 
-    @InjectMocks
-    private FraudServiceImpl fraudService;
+        <!-- Spring Boot Test -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
 
-    @BeforeEach
-    void setup() {
-        MockitoAnnotations.openMocks(this);
-    }
+        <!-- Lombok -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.32</version>
+            <scope>provided</scope>
+        </dependency>
 
-    @Test
-    void execute_shouldReturnSuccessResponse_whenFraudClientSucceeds() throws Exception {
-        // given
-        FraudRequest fraudRequest = new FraudRequest();
-        fraudRequest.setParameters(List.of(
-                new Parameter("TRX_MONITORED_ACCOUNT_NUMBER", "1111"),
-                new Parameter("transactionKey", "TXN123")
-        ));
+        <!-- Example other SDK dependencies -->
+        <dependency>
+            <groupId>com.truist.core</groupId>
+            <artifactId>core-common</artifactId>
+            <version>0.0.1</version>
+        </dependency>
+        <dependency>
+            <groupId>com.truist.core</groupId>
+            <artifactId>core-spi</artifactId>
+            <version>0.0.1</version>
+        </dependency>
+    </dependencies>
 
-        // Mock tokenization behavior
-        when(tokenizationUtil.detokenize(anyList()))
-                .thenReturn(List.of("DETOK-1111"));
+    <build>
+        <plugins>
 
-        // Mock template render
-        when(template.apply(any())).thenReturn("{ \"sample\": \"json\" }");
+            <!-- Compiler -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+                <configuration>
+                    <source>${java.version}</source>
+                    <target>${java.version}</target>
+                </configuration>
+            </plugin>
 
-        // Mock objectMapper to parse clean JSON into IfmxRequest
-        IfmxRequest ifmxRequest = new IfmxRequest();
-        when(objectMapper.readValue(anyString(), eq(IfmxRequest.class)))
-                .thenReturn(ifmxRequest);
+            <!-- Spring Boot -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>${spring.boot.version}</version>
+            </plugin>
 
-        // Mock FraudClient API success
-        RestResponse<FraudResponse> mockRestResponse = new RestResponse<>();
-        mockRestResponse.setBody(new FraudResponse("0", "SUCCESS"));
-        mockRestResponse.setSuccessful(true);
+            <!-- JaCoCo plugin -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <executions>
+                    <!-- Attach JaCoCo agent -->
+                    <execution>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
 
-        when(fraudClient.invokeApi(any(IfmxRequest.class)))
-                .thenReturn(mockRestResponse);
+                    <!-- Generate coverage report -->
+                    <execution>
+                        <id>report</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                        <configuration>
+                            <!-- Exclude model and config packages -->
+                            <excludes>
+                                <exclude>**/model/**</exclude>
+                                <exclude>**/config/**</exclude>
+                            </excludes>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
 
-        // when
-        FraudResponse result = fraudService.execute(fraudRequest);
+            <!-- SonarQube Plugin -->
+            <plugin>
+                <groupId>org.sonarsource.scanner.maven</groupId>
+                <artifactId>sonar-maven-plugin</artifactId>
+                <version>${sonar.maven.plugin.version}</version>
+            </plugin>
 
-        // then
-        assertNotNull(result);
-        assertEquals("SUCCESS", result.getMessage());
-        assertEquals("0", result.getReturnCode());
-        verify(fraudClient, times(1)).invokeApi(any(IfmxRequest.class));
-    }
+        </plugins>
+    </build>
 
-    @Test
-    void execute_shouldThrowSdkException_whenFraudClientFails() throws Exception {
-        // given
-        FraudRequest fraudRequest = new FraudRequest();
-        fraudRequest.setParameters(List.of(
-                new Parameter("TRX_MONITORED_ACCOUNT_NUMBER", "2222")
-        ));
+    <profiles>
+        <profile>
+            <id>sonar</id>
+            <properties>
+                <!-- Replace with your actual SonarQube host -->
+                <sonar.host.url>https://sonar.yourcompany.com</sonar.host.url>
+                <!-- Optional: authentication token -->
+                <!-- <sonar.login>${env.SONAR_TOKEN}</sonar.login> -->
 
-        when(tokenizationUtil.detokenize(anyList()))
-                .thenReturn(List.of("DETOK-2222"));
+                <!-- Exclude model and config packages -->
+                <sonar.exclusions>
+                    **/model/**, **/config/**
+                </sonar.exclusions>
 
-        when(template.apply(any())).thenReturn("{ \"sample\": \"json\" }");
-        when(objectMapper.readValue(anyString(), eq(IfmxRequest.class)))
-                .thenReturn(new IfmxRequest());
+                <!-- Optional additional configuration -->
+                <sonar.coverage.exclusions>
+                    **/model/**, **/config/**
+                </sonar.coverage.exclusions>
+            </properties>
+        </profile>
+    </profiles>
 
-        // Mock FraudClient API failure
-        RestResponse<FraudResponse> errorResponse = new RestResponse<>();
-        errorResponse.setSuccessful(false);
-        errorResponse.setBody(new FraudResponse("4", "FAIL"));
-        when(fraudClient.invokeApi(any())).thenReturn(errorResponse);
-
-        // when + then
-        assertThrows(SdkException.class, () -> fraudService.execute(fraudRequest));
-    }
-
-    @Test
-    void execute_shouldThrowTimeoutException() throws Exception {
-        // given
-        FraudRequest fraudRequest = new FraudRequest();
-        fraudRequest.setParameters(List.of(new Parameter("TRX_MONITORED_ACCOUNT_NUMBER", "3333")));
-
-        when(tokenizationUtil.detokenize(anyList()))
-                .thenReturn(List.of("DETOK-3333"));
-        when(template.apply(any())).thenReturn("{ \"sample\": \"json\" }");
-        when(objectMapper.readValue(anyString(), eq(IfmxRequest.class)))
-                .thenReturn(new IfmxRequest());
-
-        // Mock a timeout
-        when(fraudClient.invokeApi(any())).thenThrow(new SocketTimeoutException("Timeout"));
-
-        // when + then
-        assertThrows(SdkException.class, () -> fraudService.execute(fraudRequest));
-    }
-}
+</project>
