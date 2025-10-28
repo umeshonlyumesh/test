@@ -1,58 +1,88 @@
 package com.example.validation;
 
-import org.apache.commons.lang3.StringUtils;
-import java.util.List;
+import org.aspectj.lang.JoinPoint;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
-public class PaymentInfoValidation {
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-    private static final List<String> VALID_ACCOUNT_TYPES = List.of("SAV", "CHK");
-    private static final List<String> VALID_BANK_ID_TYPES = List.of("ABA", "BIC");
+/**
+ * Unit tests for {@link CoreIntegrationAspect}.
+ * Verifies before() behavior for various operations.
+ */
+class CoreIntegrationAspectTest {
 
-    public static void validate(PaymentInfo info, String side) {
-        if (info == null) {
-            throw new ValidationException("PaymentInfo cannot be null");
-        }
+    private CoreIntegrationAspect aspect;
+    private JoinPoint joinPoint;
+    private CoreIntegrationApiRequest request;
+    private Header header;
 
-        if (StringUtils.isBlank(side)) {
-            throw new ValidationException("Side cannot be null or empty");
-        }
+    private static final String POSTING = "POSTING";
+    private static final String QUALIFICATION = "QUALIFICATION";
+    private static final String PAYMENT = "PAYMENT";
+    private static final String VALIDATION_HEADER_ERROR = "VALIDATION_HEADER_ERROR";
 
-        switch (side.toUpperCase()) {
-            case "CREDIT" -> validateCredit(info);
-            case "DEBIT" -> validateDebit(info);
-            case "BOTH" -> {
-                validateCredit(info);
-                validateDebit(info);
-            }
-            default -> throw new ValidationException("Invalid side value. Allowed: CREDIT, DEBIT, BOTH");
-        }
+    @BeforeEach
+    void setUp() {
+        aspect = Mockito.spy(new CoreIntegrationAspect());
+        joinPoint = mock(JoinPoint.class);
+        request = mock(CoreIntegrationApiRequest.class);
+        header = mock(Header.class);
+
+        when(joinPoint.getArgs()).thenReturn(new Object[]{request});
+        when(request.getHeader()).thenReturn(header);
     }
 
-    private static void validateCredit(PaymentInfo info) {
-        if (StringUtils.isBlank(info.getCreditAccountNumber())) {
-            throw new ValidationException("Credit account number cannot be null or empty");
-        }
+    @Test
+    void shouldThrowExceptionWhenHeaderIsNull() {
+        when(request.getHeader()).thenReturn(null);
 
-        if (!VALID_ACCOUNT_TYPES.contains(StringUtils.upperCase(info.getCreditAccountNumberType()))) {
-            throw new ValidationException("Invalid credit account number type. Allowed: SAV, CHK");
-        }
+        ValidationException ex = assertThrows(
+                ValidationException.class,
+                () -> aspect.before(joinPoint)
+        );
 
-        if (!VALID_BANK_ID_TYPES.contains(StringUtils.upperCase(info.getCreditBankIdType()))) {
-            throw new ValidationException("Invalid credit bank id type. Allowed: ABA, BIC");
-        }
+        assertTrue(ex.getMessage().contains(VALIDATION_HEADER_ERROR));
     }
 
-    private static void validateDebit(PaymentInfo info) {
-        if (StringUtils.isBlank(info.getDebitAccountNumber())) {
-            throw new ValidationException("Debit account number cannot be null or empty");
-        }
+    @Test
+    void shouldInvokePostingValidationWhenOperationIsPosting() {
+        when(request.getOperation()).thenReturn(POSTING);
+        when(request.getMemoPos()).thenReturn(new Object());
 
-        if (!VALID_ACCOUNT_TYPES.contains(StringUtils.upperCase(info.getDebitAccountNumberType()))) {
-            throw new ValidationException("Invalid debit account number type. Allowed: SAV, CHK");
-        }
+        assertDoesNotThrow(() -> aspect.before(joinPoint));
 
-        if (!VALID_BANK_ID_TYPES.contains(StringUtils.upperCase(info.getDebitBankIdType()))) {
-            throw new ValidationException("Invalid debit bank id type. Allowed: ABA, BIC");
-        }
+        verify(aspect, times(1)).postingValidation(eq(request), eq(header));
+    }
+
+    @Test
+    void shouldInvokeQualificationValidationWhenOperationIsQualification() {
+        when(request.getOperation()).thenReturn(QUALIFICATION);
+        when(request.getQualification()).thenReturn(new Object());
+
+        assertDoesNotThrow(() -> aspect.before(joinPoint));
+
+        verify(aspect, times(1)).qualificationValidation(eq(request), eq(header));
+    }
+
+    @Test
+    void shouldInvokeValidateExtendedTransactionIdWhenOperationIsPayment() {
+        when(request.getOperation()).thenReturn(PAYMENT);
+        when(request.getPaymentInfo()).thenReturn(new PaymentInfo());
+
+        assertDoesNotThrow(() -> aspect.before(joinPoint));
+
+        verify(aspect, times(1))
+                .validateExtendedTransactionId(any(PaymentInfo.class), eq(header));
+    }
+
+    @Test
+    void shouldDoNothingWhenArgsAreEmpty() {
+        when(joinPoint.getArgs()).thenReturn(new Object[]{});
+
+        assertDoesNotThrow(() -> aspect.before(joinPoint));
+        verifyNoInteractions(request);
     }
 }
