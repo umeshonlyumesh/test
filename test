@@ -2,88 +2,65 @@ package com.truist.core.pez.validation;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.MockedStatic;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 /**
- * SonarQube-clean unit tests for {@link PostingValidation}.
+ * SonarQube-clean unit tests for {@link CommonValidation}.
  */
-class PostingValidationTest {
+class CommonValidationTest {
 
-    private CoreIntegrationRequest request;
-    private Header header;
-    private ValidationProperties props;
-    private MemoPost memoPost;
     private PaymentInfo paymentInfo;
+    private Header header;
 
     @BeforeEach
     void setUp() {
-        request = mock(CoreIntegrationRequest.class);
-        header = mock(Header.class);
-        props = mock(ValidationProperties.class);
-        memoPost = mock(MemoPost.class);
         paymentInfo = mock(PaymentInfo.class);
+        header = mock(Header.class);
 
-        when(request.getHeader()).thenReturn(header);
-        when(request.getMemoPost()).thenReturn(memoPost);
-        when(request.getPaymentInfo()).thenReturn(paymentInfo);
-        when(props.getSides()).thenReturn(java.util.List.of("CREDIT", "DEBIT"));
-        when(memoPost.getSide()).thenReturn("CREDIT");
+        when(paymentInfo.getUetr()).thenReturn("UETR-123");
+        when(paymentInfo.getTransactionId()).thenReturn("TXN-001");
     }
 
     @Test
-    void shouldThrowWhenMemoPostIsNull() {
-        when(request.getMemoPost()).thenReturn(null);
+    void shouldThrowWhenPaymentInfoIsNull() {
+        ValidationException ex = assertThrows(
+                ValidationException.class,
+                () -> CommonValidation.validateUtrAndTransactionId(null, header)
+        );
+
+        assertTrue(ex.getMessage().contains("PAYMENT_INFO_ERROR"));
+    }
+
+    @Test
+    void shouldThrowWhenUetrIsEmpty() {
+        when(paymentInfo.getUetr()).thenReturn("");
 
         ValidationException ex = assertThrows(
                 ValidationException.class,
-                () -> PostingValidation.postingValidation(request, header, props)
+                () -> CommonValidation.validateUtrAndTransactionId(paymentInfo, header)
         );
 
-        assertTrue(ex.getMessage().contains("POSTING_ERROR"));
+        assertTrue(ex.getMessage().contains("UETR_ERROR"));
     }
 
     @Test
-    void shouldThrowWhenSideIsEmpty() {
-        when(memoPost.getSide()).thenReturn("");
+    void shouldThrowWhenTransactionIdIsEmpty() {
+        when(paymentInfo.getTransactionId()).thenReturn("");
 
         ValidationException ex = assertThrows(
                 ValidationException.class,
-                () -> PostingValidation.postingValidation(request, header, props)
+                () -> CommonValidation.validateUtrAndTransactionId(paymentInfo, header)
         );
 
-        assertTrue(ex.getMessage().contains("SIDE_VLD"));
+        assertTrue(ex.getMessage().contains("TRANSACTION_ID_ERROR"));
     }
 
     @Test
-    void shouldThrowWhenSideNotInAllowedList() {
-        when(memoPost.getSide()).thenReturn("INVALID");
-
-        ValidationException ex = assertThrows(
-                ValidationException.class,
-                () -> PostingValidation.postingValidation(request, header, props)
+    void shouldPassWhenAllValuesValid() {
+        assertDoesNotThrow(() ->
+                CommonValidation.validateUtrAndTransactionId(paymentInfo, header)
         );
-
-        assertTrue(ex.getMessage().contains("SIDE_VLD"));
-    }
-
-    @Test
-    void shouldCallPaymentInfoValidationWhenAllValid() {
-        try (MockedStatic<PaymentInfoValidation> piv = mockStatic(PaymentInfoValidation.class)) {
-            when(memoPost.getSide()).thenReturn("DEBIT");
-
-            assertDoesNotThrow(() ->
-                    PostingValidation.postingValidation(request, header, props)
-            );
-
-            piv.verify(() -> PaymentInfoValidation.validatePaymentInfoPayload(
-                    eq("DEBIT"),
-                    eq(paymentInfo),
-                    eq(header),
-                    eq(props)
-            ), times(1));
-        }
     }
 }
