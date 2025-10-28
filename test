@@ -3,15 +3,14 @@ package com.truist.core.pez.validation;
 import org.aspectj.lang.JoinPoint;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
 import org.mockito.Mockito;
-
-import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 /**
- * Sonar-clean unit test for {@link ValidationAspect#before(JoinPoint)}.
+ * SonarQube-clean unit test for {@link ValidationAspect#before(JoinPoint)}.
  */
 class ValidationAspectTest {
 
@@ -19,8 +18,6 @@ class ValidationAspectTest {
     private JoinPoint joinPoint;
     private CoreIntegrationRequest request;
     private Header header;
-    private FraudValidation fraudValidation;
-    private ValidationProperties validationProperties;
 
     private static final String FRAUD = "FRAUD";
     private static final String QUALIFICATION = "QUALIFICATION";
@@ -28,16 +25,14 @@ class ValidationAspectTest {
 
     @BeforeEach
     void setUp() {
-        fraudValidation = mock(FraudValidation.class);
-        validationProperties = mock(ValidationProperties.class);
-
-        aspect = Mockito.spy(new ValidationAspect(validationProperties));
+        aspect = new ValidationAspect();
         joinPoint = mock(JoinPoint.class);
         request = mock(CoreIntegrationRequest.class);
         header = mock(Header.class);
 
         when(joinPoint.getArgs()).thenReturn(new Object[]{request});
         when(request.getHeader()).thenReturn(header);
+        when(request.getPaymentInfo()).thenReturn(new PaymentInfo());
     }
 
     @Test
@@ -54,53 +49,70 @@ class ValidationAspectTest {
 
     @Test
     void shouldInvokeFraudValidationWhenOperationIsFraud() {
-        when(request.getHeader()).thenReturn(header);
-        when(header.getOperation()).thenReturn(FRAUD);
-        when(OperationType.fromValue(FRAUD)).thenReturn(OperationType.FRAUD);
+        try (MockedStatic<HeaderValidation> hv = mockStatic(HeaderValidation.class);
+             MockedStatic<CommonValidation> cv = mockStatic(CommonValidation.class);
+             MockedStatic<FraudValidation> fv = mockStatic(FraudValidation.class);
+             MockedStatic<QualificationValidation> qv = mockStatic(QualificationValidation.class);
+             MockedStatic<PostingValidation> pv = mockStatic(PostingValidation.class)) {
 
-        doNothing().when(aspect).headerValidation(any());
-        doNothing().when(aspect).validateCreditAndTransactionId(any(), any());
+            when(header.getOperation()).thenReturn(FRAUD);
+            when(OperationType.fromValue(header.getOperation())).thenReturn(OperationType.FRAUD);
 
-        aspect.before(joinPoint);
+            aspect.before(joinPoint);
 
-        verify(aspect, times(1)).headerValidation(header);
-        verify(aspect, times(1)).validateCreditAndTransactionId(request.getPaymentInfo(), header);
-        // fraudValidation invoked indirectly through aspect
+            hv.verify(() -> HeaderValidation.headerValidation(eq(header), any()), times(1));
+            cv.verify(() -> CommonValidation.validateUtrAndTransactionId(any(), eq(header)), times(1));
+            fv.verify(() -> FraudValidation.validateFraudPayload(eq(request), any()), times(1));
+            qv.verifyNoInteractions();
+            pv.verifyNoInteractions();
+        }
     }
 
     @Test
     void shouldInvokeQualificationValidationWhenOperationIsQualification() {
-        when(header.getOperation()).thenReturn(QUALIFICATION);
-        when(OperationType.fromValue(QUALIFICATION)).thenReturn(OperationType.QUALIFICATION);
+        try (MockedStatic<HeaderValidation> hv = mockStatic(HeaderValidation.class);
+             MockedStatic<CommonValidation> cv = mockStatic(CommonValidation.class);
+             MockedStatic<FraudValidation> fv = mockStatic(FraudValidation.class);
+             MockedStatic<QualificationValidation> qv = mockStatic(QualificationValidation.class);
+             MockedStatic<PostingValidation> pv = mockStatic(PostingValidation.class)) {
 
-        doNothing().when(aspect).headerValidation(any());
-        doNothing().when(aspect).validateCreditAndTransactionId(any(), any());
-        doNothing().when(aspect).qualificationValidation(any(), any());
+            when(header.getOperation()).thenReturn(QUALIFICATION);
+            when(OperationType.fromValue(header.getOperation())).thenReturn(OperationType.QUALIFICATION);
 
-        aspect.before(joinPoint);
+            aspect.before(joinPoint);
 
-        verify(aspect, times(1)).qualificationValidation(request, header);
+            hv.verify(() -> HeaderValidation.headerValidation(eq(header), any()), times(1));
+            cv.verify(() -> CommonValidation.validateUtrAndTransactionId(any(), eq(header)), times(1));
+            qv.verify(() -> QualificationValidation.qualificationValidation(eq(request), eq(header), any()), times(1));
+            fv.verifyNoInteractions();
+            pv.verifyNoInteractions();
+        }
     }
 
     @Test
     void shouldInvokePostingValidationWhenOperationIsPosting() {
-        when(header.getOperation()).thenReturn(POSTING);
-        when(OperationType.fromValue(POSTING)).thenReturn(OperationType.POSTING);
+        try (MockedStatic<HeaderValidation> hv = mockStatic(HeaderValidation.class);
+             MockedStatic<CommonValidation> cv = mockStatic(CommonValidation.class);
+             MockedStatic<FraudValidation> fv = mockStatic(FraudValidation.class);
+             MockedStatic<QualificationValidation> qv = mockStatic(QualificationValidation.class);
+             MockedStatic<PostingValidation> pv = mockStatic(PostingValidation.class)) {
 
-        doNothing().when(aspect).headerValidation(any());
-        doNothing().when(aspect).validateCreditAndTransactionId(any(), any());
-        doNothing().when(aspect).postingValidation(any(), any());
+            when(header.getOperation()).thenReturn(POSTING);
+            when(OperationType.fromValue(header.getOperation())).thenReturn(OperationType.POSTING);
 
-        aspect.before(joinPoint);
+            aspect.before(joinPoint);
 
-        verify(aspect, times(1)).postingValidation(request, header);
+            hv.verify(() -> HeaderValidation.headerValidation(eq(header), any()), times(1));
+            cv.verify(() -> CommonValidation.validateUtrAndTransactionId(any(), eq(header)), times(1));
+            pv.verify(() -> PostingValidation.postingValidation(eq(request), eq(header), any()), times(1));
+            fv.verifyNoInteractions();
+            qv.verifyNoInteractions();
+        }
     }
 
     @Test
-    void shouldDoNothingWhenJoinPointArgsAreEmpty() {
+    void shouldDoNothingWhenJoinPointArgsEmpty() {
         when(joinPoint.getArgs()).thenReturn(new Object[]{});
-
         assertDoesNotThrow(() -> aspect.before(joinPoint));
-        verifyNoInteractions(request);
     }
 }
