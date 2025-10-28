@@ -3,104 +3,103 @@ package com.truist.core.pez.validation;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
-import org.mockito.Mockito;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 /**
- * SonarQube-clean unit tests for {@link QualificationValidation}.
+ * SonarQube-clean unit tests for {@link HeaderValidation}.
  */
-class QualificationValidationTest {
+class HeaderValidationTest {
 
-    private CoreIntegrationRequest request;
     private Header header;
     private ValidationProperties props;
-    private Qualification qualification;
-    private Enrichment enrichment;
-    private PaymentInfo paymentInfo;
 
     @BeforeEach
     void setUp() {
-        request = mock(CoreIntegrationRequest.class);
         header = mock(Header.class);
         props = mock(ValidationProperties.class);
-        qualification = mock(Qualification.class);
-        enrichment = mock(Enrichment.class);
-        paymentInfo = mock(PaymentInfo.class);
 
-        when(request.getQualification()).thenReturn(qualification);
-        when(request.getHeader()).thenReturn(header);
-        when(request.getPaymentInfo()).thenReturn(paymentInfo);
-        when(qualification.getEnrichment()).thenReturn(enrichment);
-        when(props.getSides()).thenReturn(java.util.List.of("CREDIT", "DEBIT"));
-        when(enrichment.getSide()).thenReturn("CREDIT");
-        when(paymentInfo.getPartyIdType()).thenReturn("Individual");
+        when(props.getSourceIds()).thenReturn(java.util.List.of("SRC1", "SRC2"));
+        when(header.getSourceId()).thenReturn("SRC1");
+        when(header.getOperation()).thenReturn("FRAUD");
+        when(header.getRequestId()).thenReturn("REQ-123");
     }
 
     @Test
-    void shouldThrowWhenQualificationIsNull() {
-        when(request.getQualification()).thenReturn(null);
+    void shouldThrowWhenSourceIdIsEmpty() {
+        when(header.getSourceId()).thenReturn(null);
 
         ValidationException ex = assertThrows(
                 ValidationException.class,
-                () -> QualificationValidation.qualificationValidation(request, header, props)
+                () -> HeaderValidation.headerValidation(header, props)
         );
 
-        assertTrue(ex.getMessage().contains("QUALIFICATION_INFO_ERROR"));
+        assertTrue(ex.getMessage().contains("SOURCE_ID_VLD"));
     }
 
     @Test
-    void shouldThrowWhenEnrichmentIsNull() {
-        when(qualification.getEnrichment()).thenReturn(null);
+    void shouldThrowWhenSourceIdNotInAllowedList() {
+        when(header.getSourceId()).thenReturn("INVALID");
 
         ValidationException ex = assertThrows(
                 ValidationException.class,
-                () -> QualificationValidation.qualificationValidation(request, header, props)
+                () -> HeaderValidation.headerValidation(header, props)
         );
 
-        assertTrue(ex.getMessage().contains("QUALIFICATION_INFO_ERROR"));
+        assertTrue(ex.getMessage().contains("SOURCE_ID_VLD"));
     }
 
     @Test
-    void shouldThrowWhenSideIsInvalid() {
-        when(enrichment.getSide()).thenReturn("INVALID");
+    void shouldThrowWhenOperationTypeIsNull() {
+        when(header.getOperation()).thenReturn(null);
 
         ValidationException ex = assertThrows(
                 ValidationException.class,
-                () -> QualificationValidation.qualificationValidation(request, header, props)
+                () -> HeaderValidation.headerValidation(header, props)
         );
 
-        assertTrue(ex.getMessage().contains("QUALIFICATION_INFO_ERROR"));
+        assertTrue(ex.getMessage().contains("OPERATION_TYPE_VLD"));
     }
 
     @Test
-    void shouldThrowWhenPartyTypeIsCompanyId() {
-        when(enrichment.getSide()).thenReturn("CREDIT");
-        when(paymentInfo.getPartyIdType()).thenReturn("CompanyId");
+    void shouldThrowWhenOperationTypeFromValueFails() {
+        when(header.getOperation()).thenReturn("UNKNOWN");
+
+        try (MockedStatic<OperationType> mockOp = mockStatic(OperationType.class)) {
+            mockOp.when(() -> OperationType.fromValue("UNKNOWN"))
+                    .thenThrow(new IllegalArgumentException("Invalid op"));
+
+            ValidationException ex = assertThrows(
+                    ValidationException.class,
+                    () -> HeaderValidation.headerValidation(header, props)
+            );
+
+            assertTrue(ex.getMessage().contains("OPERATION_TYPE_VLD"));
+        }
+    }
+
+    @Test
+    void shouldThrowWhenRequestIdIsEmpty() {
+        when(header.getRequestId()).thenReturn("");
 
         ValidationException ex = assertThrows(
                 ValidationException.class,
-                () -> QualificationValidation.qualificationValidation(request, header, props)
+                () -> HeaderValidation.headerValidation(header, props)
         );
 
-        assertTrue(ex.getMessage().contains("PARTY_TYPE_ID_NOT_ALLOWED"));
+        assertTrue(ex.getMessage().contains("REQUEST_ID_ERROR"));
     }
 
     @Test
-    void shouldCallPaymentInfoValidationWhenAllValid() {
-        try (MockedStatic<PaymentInfoValidation> piv = mockStatic(PaymentInfoValidation.class)) {
-            when(enrichment.getSide()).thenReturn("DEBIT");
+    void shouldPassWhenAllValuesValid() {
+        try (MockedStatic<OperationType> mockOp = mockStatic(OperationType.class)) {
+            mockOp.when(() -> OperationType.fromValue("FRAUD"))
+                    .thenReturn(OperationType.FRAUD);
 
             assertDoesNotThrow(() ->
-                    QualificationValidation.qualificationValidation(request, header, props));
-
-            piv.verify(() -> PaymentInfoValidation.validatePaymentInfoPayload(
-                    eq(request.getQualification().getEnrichment().getSide()),
-                    eq(request.getPaymentInfo()),
-                    eq(header),
-                    eq(props)
-            ), times(1));
+                    HeaderValidation.headerValidation(header, props)
+            );
         }
     }
 }
