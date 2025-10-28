@@ -1,149 +1,58 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
-                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+package com.example.validation;
 
-    <modelVersion>4.0.0</modelVersion>
+import org.apache.commons.lang3.StringUtils;
+import java.util.List;
 
-    <groupId>com.truist.fraud</groupId>
-    <artifactId>fraud-core-sdk</artifactId>
-    <version>1.0.0</version>
-    <packaging>jar</packaging>
+public class PaymentInfoValidation {
 
-    <name>fraud-core-sdk</name>
-    <description>Starter SDK for Fraud (IFMX)</description>
+    private static final List<String> VALID_ACCOUNT_TYPES = List.of("SAV", "CHK");
+    private static final List<String> VALID_BANK_ID_TYPES = List.of("ABA", "BIC");
 
-    <properties>
-        <java.version>21</java.version>
-        <spring.boot.version>3.3.5</spring.boot.version>
-        <maven.compiler.source>${java.version}</maven.compiler.source>
-        <maven.compiler.target>${java.version}</maven.compiler.target>
+    public static void validate(PaymentInfo info, String side) {
+        if (info == null) {
+            throw new ValidationException("PaymentInfo cannot be null");
+        }
 
-        <jacoco.version>0.8.12</jacoco.version>
-        <sonar.maven.plugin.version>3.10.0.2594</sonar.maven.plugin.version>
+        if (StringUtils.isBlank(side)) {
+            throw new ValidationException("Side cannot be null or empty");
+        }
 
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    </properties>
+        switch (side.toUpperCase()) {
+            case "CREDIT" -> validateCredit(info);
+            case "DEBIT" -> validateDebit(info);
+            case "BOTH" -> {
+                validateCredit(info);
+                validateDebit(info);
+            }
+            default -> throw new ValidationException("Invalid side value. Allowed: CREDIT, DEBIT, BOTH");
+        }
+    }
 
-    <dependencies>
+    private static void validateCredit(PaymentInfo info) {
+        if (StringUtils.isBlank(info.getCreditAccountNumber())) {
+            throw new ValidationException("Credit account number cannot be null or empty");
+        }
 
-        <!-- Spring Boot core -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter</artifactId>
-        </dependency>
+        if (!VALID_ACCOUNT_TYPES.contains(StringUtils.upperCase(info.getCreditAccountNumberType()))) {
+            throw new ValidationException("Invalid credit account number type. Allowed: SAV, CHK");
+        }
 
-        <!-- Spring Boot Test -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
+        if (!VALID_BANK_ID_TYPES.contains(StringUtils.upperCase(info.getCreditBankIdType()))) {
+            throw new ValidationException("Invalid credit bank id type. Allowed: ABA, BIC");
+        }
+    }
 
-        <!-- Lombok -->
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <version>1.18.32</version>
-            <scope>provided</scope>
-        </dependency>
+    private static void validateDebit(PaymentInfo info) {
+        if (StringUtils.isBlank(info.getDebitAccountNumber())) {
+            throw new ValidationException("Debit account number cannot be null or empty");
+        }
 
-        <!-- Example other SDK dependencies -->
-        <dependency>
-            <groupId>com.truist.core</groupId>
-            <artifactId>core-common</artifactId>
-            <version>0.0.1</version>
-        </dependency>
-        <dependency>
-            <groupId>com.truist.core</groupId>
-            <artifactId>core-spi</artifactId>
-            <version>0.0.1</version>
-        </dependency>
-    </dependencies>
+        if (!VALID_ACCOUNT_TYPES.contains(StringUtils.upperCase(info.getDebitAccountNumberType()))) {
+            throw new ValidationException("Invalid debit account number type. Allowed: SAV, CHK");
+        }
 
-    <build>
-        <plugins>
-
-            <!-- Compiler -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.11.0</version>
-                <configuration>
-                    <source>${java.version}</source>
-                    <target>${java.version}</target>
-                </configuration>
-            </plugin>
-
-            <!-- Spring Boot -->
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-                <version>${spring.boot.version}</version>
-            </plugin>
-
-            <!-- JaCoCo plugin -->
-            <plugin>
-                <groupId>org.jacoco</groupId>
-                <artifactId>jacoco-maven-plugin</artifactId>
-                <version>${jacoco.version}</version>
-                <executions>
-                    <!-- Attach JaCoCo agent -->
-                    <execution>
-                        <goals>
-                            <goal>prepare-agent</goal>
-                        </goals>
-                    </execution>
-
-                    <!-- Generate coverage report -->
-                    <execution>
-                        <id>report</id>
-                        <phase>verify</phase>
-                        <goals>
-                            <goal>report</goal>
-                        </goals>
-                        <configuration>
-                            <!-- Exclude model and config packages -->
-                            <excludes>
-                                <exclude>**/model/**</exclude>
-                                <exclude>**/config/**</exclude>
-                            </excludes>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-
-            <!-- SonarQube Plugin -->
-            <plugin>
-                <groupId>org.sonarsource.scanner.maven</groupId>
-                <artifactId>sonar-maven-plugin</artifactId>
-                <version>${sonar.maven.plugin.version}</version>
-            </plugin>
-
-        </plugins>
-    </build>
-
-    <profiles>
-        <profile>
-            <id>sonar</id>
-            <properties>
-                <!-- Replace with your actual SonarQube host -->
-                <sonar.host.url>https://sonar.yourcompany.com</sonar.host.url>
-                <!-- Optional: authentication token -->
-                <!-- <sonar.login>${env.SONAR_TOKEN}</sonar.login> -->
-
-                <!-- Exclude model and config packages -->
-                <sonar.exclusions>
-                    **/model/**, **/config/**
-                </sonar.exclusions>
-
-                <!-- Optional additional configuration -->
-                <sonar.coverage.exclusions>
-                    **/model/**, **/config/**
-                </sonar.coverage.exclusions>
-            </properties>
-        </profile>
-    </profiles>
-
-</project>
+        if (!VALID_BANK_ID_TYPES.contains(StringUtils.upperCase(info.getDebitBankIdType()))) {
+            throw new ValidationException("Invalid debit bank id type. Allowed: ABA, BIC");
+        }
+    }
+}
