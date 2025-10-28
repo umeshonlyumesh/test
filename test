@@ -8,98 +8,82 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 /**
- * SonarQube-clean unit tests for {@link HeaderValidation}.
+ * SonarQube-clean unit tests for {@link PostingValidation}.
  */
-class HeaderValidationTest {
+class PostingValidationTest {
 
+    private CoreIntegrationRequest request;
     private Header header;
     private ValidationProperties props;
+    private MemoPost memoPost;
+    private PaymentInfo paymentInfo;
 
     @BeforeEach
     void setUp() {
+        request = mock(CoreIntegrationRequest.class);
         header = mock(Header.class);
         props = mock(ValidationProperties.class);
+        memoPost = mock(MemoPost.class);
+        paymentInfo = mock(PaymentInfo.class);
 
-        when(props.getSourceIds()).thenReturn(java.util.List.of("SRC1", "SRC2"));
-        when(header.getSourceId()).thenReturn("SRC1");
-        when(header.getOperation()).thenReturn("FRAUD");
-        when(header.getRequestId()).thenReturn("REQ-123");
+        when(request.getHeader()).thenReturn(header);
+        when(request.getMemoPost()).thenReturn(memoPost);
+        when(request.getPaymentInfo()).thenReturn(paymentInfo);
+        when(props.getSides()).thenReturn(java.util.List.of("CREDIT", "DEBIT"));
+        when(memoPost.getSide()).thenReturn("CREDIT");
     }
 
     @Test
-    void shouldThrowWhenSourceIdIsEmpty() {
-        when(header.getSourceId()).thenReturn(null);
+    void shouldThrowWhenMemoPostIsNull() {
+        when(request.getMemoPost()).thenReturn(null);
 
         ValidationException ex = assertThrows(
                 ValidationException.class,
-                () -> HeaderValidation.headerValidation(header, props)
+                () -> PostingValidation.postingValidation(request, header, props)
         );
 
-        assertTrue(ex.getMessage().contains("SOURCE_ID_VLD"));
+        assertTrue(ex.getMessage().contains("POSTING_ERROR"));
     }
 
     @Test
-    void shouldThrowWhenSourceIdNotInAllowedList() {
-        when(header.getSourceId()).thenReturn("INVALID");
+    void shouldThrowWhenSideIsEmpty() {
+        when(memoPost.getSide()).thenReturn("");
 
         ValidationException ex = assertThrows(
                 ValidationException.class,
-                () -> HeaderValidation.headerValidation(header, props)
+                () -> PostingValidation.postingValidation(request, header, props)
         );
 
-        assertTrue(ex.getMessage().contains("SOURCE_ID_VLD"));
+        assertTrue(ex.getMessage().contains("SIDE_VLD"));
     }
 
     @Test
-    void shouldThrowWhenOperationTypeIsNull() {
-        when(header.getOperation()).thenReturn(null);
+    void shouldThrowWhenSideNotInAllowedList() {
+        when(memoPost.getSide()).thenReturn("INVALID");
 
         ValidationException ex = assertThrows(
                 ValidationException.class,
-                () -> HeaderValidation.headerValidation(header, props)
+                () -> PostingValidation.postingValidation(request, header, props)
         );
 
-        assertTrue(ex.getMessage().contains("OPERATION_TYPE_VLD"));
+        assertTrue(ex.getMessage().contains("SIDE_VLD"));
     }
 
     @Test
-    void shouldThrowWhenOperationTypeFromValueFails() {
-        when(header.getOperation()).thenReturn("UNKNOWN");
-
-        try (MockedStatic<OperationType> mockOp = mockStatic(OperationType.class)) {
-            mockOp.when(() -> OperationType.fromValue("UNKNOWN"))
-                    .thenThrow(new IllegalArgumentException("Invalid op"));
-
-            ValidationException ex = assertThrows(
-                    ValidationException.class,
-                    () -> HeaderValidation.headerValidation(header, props)
-            );
-
-            assertTrue(ex.getMessage().contains("OPERATION_TYPE_VLD"));
-        }
-    }
-
-    @Test
-    void shouldThrowWhenRequestIdIsEmpty() {
-        when(header.getRequestId()).thenReturn("");
-
-        ValidationException ex = assertThrows(
-                ValidationException.class,
-                () -> HeaderValidation.headerValidation(header, props)
-        );
-
-        assertTrue(ex.getMessage().contains("REQUEST_ID_ERROR"));
-    }
-
-    @Test
-    void shouldPassWhenAllValuesValid() {
-        try (MockedStatic<OperationType> mockOp = mockStatic(OperationType.class)) {
-            mockOp.when(() -> OperationType.fromValue("FRAUD"))
-                    .thenReturn(OperationType.FRAUD);
+    void shouldCallPaymentInfoValidationWhenAllValid() {
+        try (MockedStatic<PaymentInfoValidation> piv = mockStatic(PaymentInfoValidation.class)) {
+            when(memoPost.getSide()).thenReturn("DEBIT");
 
             assertDoesNotThrow(() ->
-                    HeaderValidation.headerValidation(header, props)
+                    PostingValidation.postingValidation(request, header, props)
             );
+
+            piv.verify(() -> PaymentInfoValidation.validatePaymentInfoPayload(
+                    eq("DEBIT"),
+                    eq(paymentInfo),
+                    eq(header),
+                    eq(props)
+            ), times(1));
         }
     }
 }
