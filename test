@@ -1,66 +1,24 @@
-package com.truist.core.pez.validation;
+public class TokenizationHelper {
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+    public static void detokenizeFields(FraudRequest request, 
+                                        TokenizationUtil tokenizationUtil, 
+                                        Set<String> fieldIds) {
+        List<Parameter> params = request.getParameters();
+        List<String> tokens = params.stream()
+            .filter(p -> fieldIds.contains(p.getFieldId()))
+            .map(Parameter::getFieldValue)
+            .toList();
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+        if (tokens.isEmpty()) return;
 
-/**
- * SonarQube-clean unit tests for {@link CommonValidation}.
- */
-class CommonValidationTest {
+        List<String> detokValues = tokenizationUtil.deTokenize(tokens);
+        Iterator<String> detokIt = detokValues.iterator();
 
-    private PaymentInfo paymentInfo;
-    private Header header;
-
-    @BeforeEach
-    void setUp() {
-        paymentInfo = mock(PaymentInfo.class);
-        header = mock(Header.class);
-
-        when(paymentInfo.getUetr()).thenReturn("UETR-123");
-        when(paymentInfo.getTransactionId()).thenReturn("TXN-001");
-    }
-
-    @Test
-    void shouldThrowWhenPaymentInfoIsNull() {
-        ValidationException ex = assertThrows(
-                ValidationException.class,
-                () -> CommonValidation.validateUtrAndTransactionId(null, header)
-        );
-
-        assertTrue(ex.getMessage().contains("PAYMENT_INFO_ERROR"));
-    }
-
-    @Test
-    void shouldThrowWhenUetrIsEmpty() {
-        when(paymentInfo.getUetr()).thenReturn("");
-
-        ValidationException ex = assertThrows(
-                ValidationException.class,
-                () -> CommonValidation.validateUtrAndTransactionId(paymentInfo, header)
-        );
-
-        assertTrue(ex.getMessage().contains("UETR_ERROR"));
-    }
-
-    @Test
-    void shouldThrowWhenTransactionIdIsEmpty() {
-        when(paymentInfo.getTransactionId()).thenReturn("");
-
-        ValidationException ex = assertThrows(
-                ValidationException.class,
-                () -> CommonValidation.validateUtrAndTransactionId(paymentInfo, header)
-        );
-
-        assertTrue(ex.getMessage().contains("TRANSACTION_ID_ERROR"));
-    }
-
-    @Test
-    void shouldPassWhenAllValuesValid() {
-        assertDoesNotThrow(() ->
-                CommonValidation.validateUtrAndTransactionId(paymentInfo, header)
-        );
+        for (int i = 0; i < params.size(); i++) {
+            var p = params.get(i);
+            if (fieldIds.contains(p.getFieldId()) && detokIt.hasNext()) {
+                params.set(i, new Parameter(p.getFieldId(), detokIt.next()));
+            }
+        }
     }
 }
