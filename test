@@ -2,16 +2,24 @@
 void testRun_success() throws Exception {
     String response = "File content";
 
-    // Mock the complete fluent chain
+    // Mock full chain for POST request
     when(restClient.post()).thenReturn((RestClient.RequestBodyUriSpec) uriSpec);
     when(uriSpec.uri(anyString(), ArgumentMatchers.<Object>anyVararg())).thenReturn(headersSpec);
     when(uriSpec.uri(anyString())).thenReturn(headersSpec);
 
-    // Mock header/contentType chain (RequestBodySpec)
-    when(((RestClient.RequestBodySpec) headersSpec).header(anyString(), anyString())).thenReturn((RestClient.RequestBodySpec) headersSpec);
-    when(((RestClient.RequestBodySpec) headersSpec).contentType(any())).thenReturn((RestClient.RequestBodySpec) headersSpec);
-    when(((RestClient.RequestBodySpec) headersSpec).body(any(), eq(String.class))).thenReturn(headersSpec);
+    // Mock header / contentType chain
+    when(((RestClient.RequestBodySpec) headersSpec).header(anyString(), anyString()))
+            .thenReturn((RestClient.RequestBodySpec) headersSpec);
+    when(((RestClient.RequestBodySpec) headersSpec).contentType(any()))
+            .thenReturn((RestClient.RequestBodySpec) headersSpec);
 
+    // ✅ Handle both possible body() overloads:
+    when(((RestClient.RequestBodySpec) headersSpec).body(any()))
+            .thenReturn(headersSpec);
+    when(((RestClient.RequestBodySpec) headersSpec).body(any(), any(Class.class)))
+            .thenReturn(headersSpec);
+
+    // Mock retrieve and body of response
     when(headersSpec.retrieve()).thenReturn(responseSpec);
     when(responseSpec.body(String.class)).thenReturn(response);
 
