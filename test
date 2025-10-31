@@ -1,73 +1,69 @@
-import java.time.*;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
-import java.util.List;
+package com.truist.core.fraud.util;
 
-public class DateFormatNormalizer {
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
-    // Supported patterns
-    private static final List<String> SUPPORTED_PATTERNS = List.of(
-        "yyyy-MM-dd HH:mm:ss.SSS",
-        "M/d/yyyy",
-        "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
-        "yyyy-MM-dd'T'HH:mm:ss.SSSX",
-        "yyyy-MM-dd HH:mm:ss.SSS"
-    );
+import static org.junit.jupiter.api.Assertions.*;
 
-    // Target format -> yyyy-MM-dd'T'HH:mm:ss.SSSZ
-    private static final DateTimeFormatter TARGET_FORMAT =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+/**
+ * Unit tests for {@link DateFormatNormalizer}.
+ */
+class DateFormatNormalizerTest {
 
-    public static String normalize(String input) {
-        if (input == null || input.isBlank()) {
-            return "";
-        }
+    @Test
+    @DisplayName("Should convert yyyy-MM-dd HH:mm:ss.SSS to ISO format with zone")
+    void testNormalize_YyyyMmDdHHmmssSSS() {
+        String input = "2025-11-07 15:26:21.211";
+        String output = DateFormatNormalizer.normalize(input);
 
-        input = input.trim();
-
-        for (String pattern : SUPPORTED_PATTERNS) {
-            try {
-                DateTimeFormatter formatter = DateTimeFormatter.ofPattern(pattern)
-                        .withZone(ZoneId.systemDefault());
-
-                ZonedDateTime zdt;
-
-                if (pattern.contains("'T'") && pattern.contains("X")) {
-                    // Pattern includes timezone info
-                    zdt = ZonedDateTime.parse(input, formatter);
-                } else if (pattern.contains("HH")) {
-                    // Datetime without zone → assume system zone
-                    LocalDateTime ldt = LocalDateTime.parse(input, formatter);
-                    zdt = ldt.atZone(ZoneId.systemDefault());
-                } else {
-                    // Simple date only → assume start of day
-                    LocalDate ld = LocalDate.parse(input, formatter);
-                    zdt = ld.atStartOfDay(ZoneId.systemDefault());
-                }
-
-                return zdt.format(TARGET_FORMAT);
-            } catch (DateTimeParseException ignored) {
-                // Try next pattern
-            }
-        }
-
-        // No matching format
-        return "";
+        assertNotNull(output);
+        assertTrue(output.startsWith("2025-11-07T15:26:21.211"),
+                "Output should start with date and time portion");
+        assertTrue(output.contains("T"),
+                "Output should contain 'T' separator between date and time");
     }
 
-    // ✅ Quick Test
-    public static void main(String[] args) {
-        List<String> samples = List.of(
-            "2025-03-03 10:22:15.123",
-            "7/19/2019",
-            "2025-03-03T10:22:15.123-04:00",
-            "2025-03-03T10:22:15.123Z",
-            "2025-11-07 15:26:21.211",
-            "invalid-date"
-        );
+    @Test
+    @DisplayName("Should convert M/d/yyyy to ISO start-of-day format")
+    void testNormalize_Mdyyyy() {
+        String input = "7/19/2019";
+        String output = DateFormatNormalizer.normalize(input);
 
-        for (String sample : samples) {
-            System.out.printf("%-35s -> %s%n", sample, normalize(sample));
-        }
+        assertEquals("2019-07-19T00:00:00.000-04:00", output,
+                "Expected normalized date at start of day with timezone");
+    }
+
+    @Test
+    @DisplayName("Should normalize ISO date with timezone offset (XXX)")
+    void testNormalize_IsoWithTimezone() {
+        String input = "2025-03-03T10:22:15.123-04:00";
+        String output = DateFormatNormalizer.normalize(input);
+
+        assertEquals("2025-03-03T10:22:15.123-04:00", output);
+    }
+
+    @Test
+    @DisplayName("Should normalize ISO date in UTC (Z)")
+    void testNormalize_IsoUtc() {
+        String input = "2025-03-03T10:22:15.123Z";
+        String output = DateFormatNormalizer.normalize(input);
+
+        assertEquals("2025-03-03T10:22:15.123Z", output);
+    }
+
+    @Test
+    @DisplayName("Should return empty string for invalid input")
+    void testNormalize_InvalidInput() {
+        String input = "NotADate";
+        String output = DateFormatNormalizer.normalize(input);
+
+        assertEquals("", output, "Expected empty string for invalid date format");
+    }
+
+    @Test
+    @DisplayName("Should return empty string for null or blank input")
+    void testNormalize_NullOrBlank() {
+        assertEquals("", DateFormatNormalizer.normalize(null));
+        assertEquals("", DateFormatNormalizer.normalize(" "));
     }
 }
