@@ -1,43 +1,56 @@
 @ExtendWith(MockitoExtension.class)
 class EWSResponseForOnboardingTest {
 
-    @Mock private RestClient restClient;
-    @Mock private RestClient.RequestBodyUriSpec bodyUriSpec;
-    @Mock private RestClient.RequestBodySpec bodySpec;
-    @Mock private RestClient.RequestHeadersSpec<?> requestHeadersSpec;
-    @Mock private RestClient.ResponseSpec responseSpec;
+    @Mock
+    private RestClient restClient;
+
+    @Mock
+    private RestClient.RequestBodyUriSpec bodyUriSpec;
+
+    @Mock
+    private RestClient.RequestBodySpec bodySpec;
+
+    @Mock
+    private RestClient.RequestHeadersSpec<?> headersSpec;
+
+    @Mock
+    private RestClient.ResponseSpec responseSpec;
 
     @InjectMocks
     private EWSResponseForOnboarding service;
 
     @Test
-    void testRun() throws Exception {
+    void testRun_success() throws Exception {
+        // given
         String mockResponse = "Success";
 
-        // Step 1: post() returns a RequestBodyUriSpec
+        // 1️⃣ post()
         when(restClient.post()).thenReturn(bodyUriSpec);
 
-        // Step 2: uri() returns a RequestBodySpec
+        // 2️⃣ uri()  → returns RequestBodySpec
         when(bodyUriSpec.uri(eq("/company-enrollment/ews-update"))).thenReturn(bodySpec);
+        // also support overload with params
+        when(bodyUriSpec.uri(eq("/company-enrollment/ews-update"), any(Object[].class)))
+                .thenReturn(bodySpec);
 
-        // Step 3: contentType() returns a RequestBodySpec
+        // 3️⃣ contentType()  → returns RequestBodySpec
         when(bodySpec.contentType(eq(MediaType.APPLICATION_JSON))).thenReturn(bodySpec);
 
-        // Step 4: body() returns a RequestHeadersSpec (this fixes your NPE)
-        when(bodySpec.body(any())).thenReturn(requestHeadersSpec);
+        // 4️⃣ body()  → returns RequestHeadersSpec
+        when(bodySpec.body(any())).thenReturn(headersSpec);
 
-        // Step 5: retrieve() returns ResponseSpec
-        when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
+        // 5️⃣ retrieve()  → returns ResponseSpec
+        when(headersSpec.retrieve()).thenReturn(responseSpec);
 
-        // Step 6: body(String.class) returns mock response
+        // 6️⃣ body(String.class) → returns final string
         when(responseSpec.body(String.class)).thenReturn(mockResponse);
 
-        // Act
+        // when
         service.run();
 
-        // Assert
+        // then
         verify(restClient, times(1)).post();
-        verify(requestHeadersSpec, times(1)).retrieve();
+        verify(headersSpec, times(1)).retrieve();
         verify(responseSpec, times(1)).body(String.class);
     }
 }
