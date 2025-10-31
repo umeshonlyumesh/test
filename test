@@ -1,32 +1,43 @@
-@Test
-void testRun_success() throws Exception {
-    String response = "File content";
+@ExtendWith(MockitoExtension.class)
+class EWSResponseForOnboardingTest {
 
-    // Mock full chain for POST request
-    when(restClient.post()).thenReturn((RestClient.RequestBodyUriSpec) uriSpec);
-    when(uriSpec.uri(anyString(), ArgumentMatchers.<Object>anyVararg())).thenReturn(headersSpec);
-    when(uriSpec.uri(anyString())).thenReturn(headersSpec);
+    @Mock private RestClient restClient;
+    @Mock private RestClient.RequestBodyUriSpec bodyUriSpec;
+    @Mock private RestClient.RequestBodySpec bodySpec;
+    @Mock private RestClient.RequestHeadersSpec<?> requestHeadersSpec;
+    @Mock private RestClient.ResponseSpec responseSpec;
 
-    // Mock header / contentType chain
-    when(((RestClient.RequestBodySpec) headersSpec).header(anyString(), anyString()))
-            .thenReturn((RestClient.RequestBodySpec) headersSpec);
-    when(((RestClient.RequestBodySpec) headersSpec).contentType(any()))
-            .thenReturn((RestClient.RequestBodySpec) headersSpec);
+    @InjectMocks
+    private EWSResponseForOnboarding service;
 
-    // ✅ Handle both possible body() overloads:
-    when(((RestClient.RequestBodySpec) headersSpec).body(any()))
-            .thenReturn(headersSpec);
-    when(((RestClient.RequestBodySpec) headersSpec).body(any(), any(Class.class)))
-            .thenReturn(headersSpec);
+    @Test
+    void testRun() throws Exception {
+        String mockResponse = "Success";
 
-    // Mock retrieve and body of response
-    when(headersSpec.retrieve()).thenReturn(responseSpec);
-    when(responseSpec.body(String.class)).thenReturn(response);
+        // Step 1: post() returns a RequestBodyUriSpec
+        when(restClient.post()).thenReturn(bodyUriSpec);
 
-    // Act
-    service.run();
+        // Step 2: uri() returns a RequestBodySpec
+        when(bodyUriSpec.uri(eq("/company-enrollment/ews-update"))).thenReturn(bodySpec);
 
-    // Assert
-    verify(restClient, times(1)).post();
-    verify(responseSpec, times(1)).body(String.class);
+        // Step 3: contentType() returns a RequestBodySpec
+        when(bodySpec.contentType(eq(MediaType.APPLICATION_JSON))).thenReturn(bodySpec);
+
+        // Step 4: body() returns a RequestHeadersSpec (this fixes your NPE)
+        when(bodySpec.body(any())).thenReturn(requestHeadersSpec);
+
+        // Step 5: retrieve() returns ResponseSpec
+        when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
+
+        // Step 6: body(String.class) returns mock response
+        when(responseSpec.body(String.class)).thenReturn(mockResponse);
+
+        // Act
+        service.run();
+
+        // Assert
+        verify(restClient, times(1)).post();
+        verify(requestHeadersSpec, times(1)).retrieve();
+        verify(responseSpec, times(1)).body(String.class);
+    }
 }
