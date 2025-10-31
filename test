@@ -3,16 +3,12 @@ class EWSResponseForOnboardingTest {
 
     @Mock
     private RestClient restClient;
-
     @Mock
     private RestClient.RequestBodyUriSpec bodyUriSpec;
-
     @Mock
     private RestClient.RequestBodySpec bodySpec;
-
     @Mock
     private RestClient.RequestHeadersSpec<?> headersSpec;
-
     @Mock
     private RestClient.ResponseSpec responseSpec;
 
@@ -21,34 +17,33 @@ class EWSResponseForOnboardingTest {
 
     @Test
     void testRun_success() throws Exception {
-        // given
         String mockResponse = "Success";
 
-        // 1️⃣ post()
+        // Step 1: POST
         when(restClient.post()).thenReturn(bodyUriSpec);
 
-        // 2️⃣ uri()  → returns RequestBodySpec
+        // Step 2: URI
         when(bodyUriSpec.uri(eq("/company-enrollment/ews-update"))).thenReturn(bodySpec);
-        // also support overload with params
         when(bodyUriSpec.uri(eq("/company-enrollment/ews-update"), any(Object[].class)))
                 .thenReturn(bodySpec);
 
-        // 3️⃣ contentType()  → returns RequestBodySpec
+        // Step 3: contentType()
         when(bodySpec.contentType(eq(MediaType.APPLICATION_JSON))).thenReturn(bodySpec);
 
-        // 4️⃣ body()  → returns RequestHeadersSpec
-        when(bodySpec.body(any())).thenReturn(headersSpec);
+        // Step 4: body() → workaround with lenient and cast
+        // (force Mockito to accept any generic return)
+        lenient().when(bodySpec.body(any())).thenAnswer(inv -> headersSpec);
 
-        // 5️⃣ retrieve()  → returns ResponseSpec
+        // Step 5: retrieve()
         when(headersSpec.retrieve()).thenReturn(responseSpec);
 
-        // 6️⃣ body(String.class) → returns final string
+        // Step 6: body(String.class)
         when(responseSpec.body(String.class)).thenReturn(mockResponse);
 
-        // when
+        // Act
         service.run();
 
-        // then
+        // Assert
         verify(restClient, times(1)).post();
         verify(headersSpec, times(1)).retrieve();
         verify(responseSpec, times(1)).body(String.class);
