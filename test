@@ -1,69 +1,84 @@
-package com.truist.core.fraud.util;
+package com.truist.billing.service;
 
-import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.*;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.web.util.UriComponentsBuilder;
 
-import static org.junit.jupiter.api.Assertions.*;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
-/**
- * Unit tests for {@link DateFormatNormalizer}.
- */
-class DateFormatNormalizerTest {
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
 
-    @Test
-    @DisplayName("Should convert yyyy-MM-dd HH:mm:ss.SSS to ISO format with zone")
-    void testNormalize_YyyyMmDdHHmmssSSS() {
-        String input = "2025-11-07 15:26:21.211";
-        String output = DateFormatNormalizer.normalize(input);
+@ExtendWith(MockitoExtension.class)
+class BillingExtractServiceTest {
 
-        assertNotNull(output);
-        assertTrue(output.startsWith("2025-11-07T15:26:21.211"),
-                "Output should start with date and time portion");
-        assertTrue(output.contains("T"),
-                "Output should contain 'T' separator between date and time");
+    @Mock
+    private RestClient restClient;
+
+    @Mock
+    private RestClient.RequestHeadersUriSpec<?> uriSpec;
+
+    @Mock
+    private RestClient.ResponseSpec responseSpec;
+
+    @Mock
+    private BillingFileWriter fileWriter;
+
+    @InjectMocks
+    private BillingExtractService service;
+
+    private final String BASE_URL = "http://localhost:8080/avs";
+
+    @BeforeEach
+    void setup() {
+        ReflectionTestUtils.setField(service, "baseUrl", BASE_URL);
     }
 
     @Test
-    @DisplayName("Should convert M/d/yyyy to ISO start-of-day format")
-    void testNormalize_Mdyyyy() {
-        String input = "7/19/2019";
-        String output = DateFormatNormalizer.normalize(input);
+    void testRun_DailyBilling_Success() throws Exception {
+        // Arrange
+        BillingExtractResponse mockResponse = new BillingExtractResponse();
+        when(restClient.get(any(String.class))).thenReturn(uriSpec);
+        when(uriSpec.retrieve()).thenReturn(responseSpec);
+        when(responseSpec.body(BillingExtractResponse.class)).thenReturn(mockResponse);
 
-        assertEquals("2019-07-19T00:00:00.000-04:00", output,
-                "Expected normalized date at start of day with timezone");
+        // Act
+        service.run(BillingPeriod.DAILY);
+
+        // Assert
+        verify(restClient, times(1)).get(ArgumentMatchers.contains("/billingInfo"));
+        verify(fileWriter, times(1)).write2Files(mockResponse);
     }
 
     @Test
-    @DisplayName("Should normalize ISO date with timezone offset (XXX)")
-    void testNormalize_IsoWithTimezone() {
-        String input = "2025-03-03T10:22:15.123-04:00";
-        String output = DateFormatNormalizer.normalize(input);
+    void testRun_MonthlyBilling_Success() throws Exception {
+        // Arrange
+        BillingExtractResponse mockResponse = new BillingExtractResponse();
+        when(restClient.get(any(String.class))).thenReturn(uriSpec);
+        when(uriSpec.retrieve()).thenReturn(responseSpec);
+        when(responseSpec.body(BillingExtractResponse.class)).thenReturn(mockResponse);
 
-        assertEquals("2025-03-03T10:22:15.123-04:00", output);
+        // Act
+        service.run(BillingPeriod.MONTHLY);
+
+        // Assert
+        verify(restClient, times(1)).get(ArgumentMatchers.contains("/billingInfo"));
+        verify(fileWriter, times(1)).write2Files(mockResponse);
     }
 
     @Test
-    @DisplayName("Should normalize ISO date in UTC (Z)")
-    void testNormalize_IsoUtc() {
-        String input = "2025-03-03T10:22:15.123Z";
-        String output = DateFormatNormalizer.normalize(input);
+    void testRun_DefaultBilling_NoCall() throws Exception {
+        // Act
+        service.run(null);
 
-        assertEquals("2025-03-03T10:22:15.123Z", output);
-    }
-
-    @Test
-    @DisplayName("Should return empty string for invalid input")
-    void testNormalize_InvalidInput() {
-        String input = "NotADate";
-        String output = DateFormatNormalizer.normalize(input);
-
-        assertEquals("", output, "Expected empty string for invalid date format");
-    }
-
-    @Test
-    @DisplayName("Should return empty string for null or blank input")
-    void testNormalize_NullOrBlank() {
-        assertEquals("", DateFormatNormalizer.normalize(null));
-        assertEquals("", DateFormatNormalizer.normalize(" "));
+        // Assert
+        verify(restClient, never()).get(any());
+        verify(fileWriter, never()).write2Files(any());
     }
 }
