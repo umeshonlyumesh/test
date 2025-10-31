@@ -1,44 +1,54 @@
 @ExtendWith(MockitoExtension.class)
 class EWSResponseForOnboardingTest {
 
-    @Mock RestClient restClient;
-    @Mock RestClient.RequestBodyUriSpec bodyUriSpec;
-    @Mock RestClient.RequestBodySpec bodySpec;       // 👈 important
-    @Mock RestClient.RequestHeadersSpec<?> headersSpec;
-    @Mock RestClient.ResponseSpec responseSpec;
+    @Mock
+    private RestClient restClient;
+    @Mock
+    private RestClient.RequestBodyUriSpec bodyUriSpec;
+    @Mock
+    private RestClient.RequestBodySpec bodySpec;
+    @Mock
+    private RestClient.RequestHeadersSpec<?> headersSpec;
+    @Mock
+    private RestClient.ResponseSpec responseSpec;
 
-    @InjectMocks EWSResponseForOnboarding service;
+    @InjectMocks
+    private EWSResponseForOnboarding service;
 
     @Test
-    void testRun() throws Exception {
+    void testRun_success() throws Exception {
         String mockResponse = "Success";
 
-        // Step 1: POST
+        // 1️⃣ post() → bodyUriSpec
         when(restClient.post()).thenReturn(bodyUriSpec);
 
-        // Step 2: URI
-        when(bodyUriSpec.uri(eq("/company-enrollment/ews-update"))).thenReturn(bodySpec);
-        when(bodyUriSpec.uri(eq("/company-enrollment/ews-update"), any(Object[].class)))
+        // 2️⃣ uri() → bodySpec
+        when(bodyUriSpec.uri(eq("/company-enrollment/ews-update")))
                 .thenReturn(bodySpec);
 
-        // Step 3: contentType()
-        when(bodySpec.contentType(eq(MediaType.APPLICATION_JSON))).thenReturn(bodySpec);
+        // 3️⃣ contentType() → bodySpec
+        when(bodySpec.contentType(eq(MediaType.APPLICATION_JSON)))
+                .thenReturn(bodySpec);
 
-        // ✅ Step 4: body() MUST return RequestBodySpec
-        when(bodySpec.body(any())).thenReturn(bodySpec);
+        // 4️⃣ body() → headersSpec
+        // mock both overloads: body(Object) and body(Object, Class)
+        lenient().when(bodySpec.body(any()))
+                .thenReturn(headersSpec);
+        lenient().when(bodySpec.body(any(), any(Class.class)))
+                .thenReturn(headersSpec);
 
-        // ✅ Step 5: retrieve()
-        when(bodySpec.retrieve()).thenReturn(responseSpec);
+        // 5️⃣ retrieve() → responseSpec
+        when(headersSpec.retrieve()).thenReturn(responseSpec);
 
-        // ✅ Step 6: final body(String.class)
+        // 6️⃣ body(String.class) → final response
         when(responseSpec.body(String.class)).thenReturn(mockResponse);
 
-        // Act
+        // act
         service.run();
 
-        // Assert
+        // assert
         verify(restClient, times(1)).post();
-        verify(bodySpec, times(1)).retrieve();
+        verify(headersSpec, times(1)).retrieve();
         verify(responseSpec, times(1)).body(String.class);
     }
 }
