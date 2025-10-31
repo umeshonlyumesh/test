@@ -1,84 +1,24 @@
-package com.truist.billing.service;
+@Test
+void testRun_success() throws Exception {
+    String response = "File content";
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.*;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.web.util.UriComponentsBuilder;
+    // Mock the complete fluent chain
+    when(restClient.post()).thenReturn((RestClient.RequestBodyUriSpec) uriSpec);
+    when(uriSpec.uri(anyString(), ArgumentMatchers.<Object>anyVararg())).thenReturn(headersSpec);
+    when(uriSpec.uri(anyString())).thenReturn(headersSpec);
 
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
+    // Mock header/contentType chain (RequestBodySpec)
+    when(((RestClient.RequestBodySpec) headersSpec).header(anyString(), anyString())).thenReturn((RestClient.RequestBodySpec) headersSpec);
+    when(((RestClient.RequestBodySpec) headersSpec).contentType(any())).thenReturn((RestClient.RequestBodySpec) headersSpec);
+    when(((RestClient.RequestBodySpec) headersSpec).body(any(), eq(String.class))).thenReturn(headersSpec);
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.*;
+    when(headersSpec.retrieve()).thenReturn(responseSpec);
+    when(responseSpec.body(String.class)).thenReturn(response);
 
-@ExtendWith(MockitoExtension.class)
-class BillingExtractServiceTest {
+    // Act
+    service.run();
 
-    @Mock
-    private RestClient restClient;
-
-    @Mock
-    private RestClient.RequestHeadersUriSpec<?> uriSpec;
-
-    @Mock
-    private RestClient.ResponseSpec responseSpec;
-
-    @Mock
-    private BillingFileWriter fileWriter;
-
-    @InjectMocks
-    private BillingExtractService service;
-
-    private final String BASE_URL = "http://localhost:8080/avs";
-
-    @BeforeEach
-    void setup() {
-        ReflectionTestUtils.setField(service, "baseUrl", BASE_URL);
-    }
-
-    @Test
-    void testRun_DailyBilling_Success() throws Exception {
-        // Arrange
-        BillingExtractResponse mockResponse = new BillingExtractResponse();
-        when(restClient.get(any(String.class))).thenReturn(uriSpec);
-        when(uriSpec.retrieve()).thenReturn(responseSpec);
-        when(responseSpec.body(BillingExtractResponse.class)).thenReturn(mockResponse);
-
-        // Act
-        service.run(BillingPeriod.DAILY);
-
-        // Assert
-        verify(restClient, times(1)).get(ArgumentMatchers.contains("/billingInfo"));
-        verify(fileWriter, times(1)).write2Files(mockResponse);
-    }
-
-    @Test
-    void testRun_MonthlyBilling_Success() throws Exception {
-        // Arrange
-        BillingExtractResponse mockResponse = new BillingExtractResponse();
-        when(restClient.get(any(String.class))).thenReturn(uriSpec);
-        when(uriSpec.retrieve()).thenReturn(responseSpec);
-        when(responseSpec.body(BillingExtractResponse.class)).thenReturn(mockResponse);
-
-        // Act
-        service.run(BillingPeriod.MONTHLY);
-
-        // Assert
-        verify(restClient, times(1)).get(ArgumentMatchers.contains("/billingInfo"));
-        verify(fileWriter, times(1)).write2Files(mockResponse);
-    }
-
-    @Test
-    void testRun_DefaultBilling_NoCall() throws Exception {
-        // Act
-        service.run(null);
-
-        // Assert
-        verify(restClient, never()).get(any());
-        verify(fileWriter, never()).write2Files(any());
-    }
+    // Assert
+    verify(restClient, times(1)).post();
+    verify(responseSpec, times(1)).body(String.class);
 }
