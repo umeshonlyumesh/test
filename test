@@ -1,166 +1,73 @@
-import com.github.jknack.handlebars.Handlebars;
-import com.github.jknack.handlebars.Template;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
-import java.time.temporal.ChronoField;
-import java.util.*;
+import java.util.List;
 
-public class UniversalJulianHandlebars {
+public class DateFormatNormalizer {
 
-    public static void main(String[] args) throws Exception {
-        Handlebars handlebars = new Handlebars();
+    // Supported patterns
+    private static final List<String> SUPPORTED_PATTERNS = List.of(
+        "yyyy-MM-dd HH:mm:ss.SSS",
+        "M/d/yyyy",
+        "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+        "yyyy-MM-dd'T'HH:mm:ss.SSSX",
+        "yyyy-MM-dd HH:mm:ss.SSS"
+    );
 
-        // ✅ Register robust date converter
-        handlebars.registerHelper("toJulian", (context, options) -> {
-            if (context == null || context.toString().isBlank()) return "";
+    // Target format -> yyyy-MM-dd'T'HH:mm:ss.SSSZ
+    private static final DateTimeFormatter TARGET_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
 
-            String input = context.toString().trim();
-            LocalDate date = parseFlexibleDate(input);
-
-            if (date == null) return "InvalidDate";
-            int dayOfYear = date.getDayOfYear();
-            return date.getYear() * 1000 + dayOfYear;
-        });
-
-        // ✅ Template
-        Template template = handlebars.compileInline("{{toJulian interbankSettlementDate}}");
-
-        // ✅ Try multiple formats
-        List<String> samples = List.of(
-            "2025-11-07T15:26:21.211",
-            "2025-03-03T00:00:00.000-04:00",
-            "2019-03-07 21:48:50",
-            "07/19/2019",
-            "2025-11-07",
-            "Fri, 07 Nov 2025 15:26:21 GMT"
-        );
-
-        for (String sample : samples) {
-            System.out.printf("%-35s -> %s%n",
-                sample, template.apply(Map.of("interbankSettlementDate", sample)));
+    public static String normalize(String input) {
+        if (input == null || input.isBlank()) {
+            return "";
         }
-    }
 
-    // 🔥 Flexible parser supporting multiple date/time formats
-    private static LocalDate parseFlexibleDate(String input) {
-        List<String> patterns = List.of(
-            "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",   // ISO with timezone
-            "yyyy-MM-dd'T'HH:mm:ss.SSS",      // ISO with millis
-            "yyyy-MM-dd'T'HH:mm:ss",          // ISO without millis
-            "yyyy-MM-dd HH:mm:ss",            // space-separated datetime
-            "MM/dd/yyyy HH:mm:ss",            // US datetime
-            "MM/dd/yyyy",                     // US date
-            "yyyy-MM-dd",                     // simple ISO date
-            "EEE, dd MMM yyyy HH:mm:ss z"     // RFC_1123 date (e.g., Fri, 07 Nov 2025 15:26:21 GMT)
-        );
+        input = input.trim();
 
-        for (String pattern : patterns) {
+        for (String pattern : SUPPORTED_PATTERNS) {
             try {
                 DateTimeFormatter formatter = DateTimeFormatter.ofPattern(pattern)
                         .withZone(ZoneId.systemDefault());
-                if (pattern.contains("HH")) {
-                    // has time
-                    return ZonedDateTime.parse(input, formatter).toLocalDate();
+
+                ZonedDateTime zdt;
+
+                if (pattern.contains("'T'") && pattern.contains("X")) {
+                    // Pattern includes timezone info
+                    zdt = ZonedDateTime.parse(input, formatter);
+                } else if (pattern.contains("HH")) {
+                    // Datetime without zone → assume system zone
+                    LocalDateTime ldt = LocalDateTime.parse(input, formatter);
+                    zdt = ldt.atZone(ZoneId.systemDefault());
                 } else {
-                    return LocalDate.parse(input, formatter);
+                    // Simple date only → assume start of day
+                    LocalDate ld = LocalDate.parse(input, formatter);
+                    zdt = ld.atStartOfDay(ZoneId.systemDefault());
                 }
-            } catch (DateTimeParseException ignored) {}
+
+                return zdt.format(TARGET_FORMAT);
+            } catch (DateTimeParseException ignored) {
+                // Try next pattern
+            }
         }
 
-        // ✅ Try ISO parser fallback
-        try {
-            return OffsetDateTime.parse(input).toLocalDate();
-        } catch (Exception ignored) {}
-
-        return {
-  "generic": {
-    "baseTransactionB": {
-      "accountKey": "{{toBigDecimal accountKey}}",
-      "overrideTypeCd": "{{toBoolean overrideTypeCd}}",
-      "secondaryTransactionType": "{{secondaryTransactionType}}",
-      "thirdPartyProviderCustomerName": "{{thirdPartyProviderCustomerName}}"
-    },
-    "baseTransactionC": {
-      "transactionKey": "{{transactionKey}}",
-      "transactionType": "{{transactionType}}",
-      "transactionOriginationSystemCd": "{{transactionOriginationSystemCd}}",
-      "interbankSettlementDate": "{{toJulian interbankSettlementDate}}"
+        // No matching format
+        return "";
     }
-  }
-}
 
-
-import com.github.jknack.handlebars.Handlebars;
-import com.github.jknack.handlebars.Template;
-import com.github.jknack.handlebars.Options;
-import java.math.BigDecimal;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.temporal.ChronoField;
-import java.util.Map;
-
-public class HandlebarsExample {
-
-    public static void main(String[] args) throws Exception {
-        Handlebars handlebars = new Handlebars();
-
-        // Helper 1: Convert numeric (0/1) to boolean
-        handlebars.registerHelper("toBoolean", (context, options) -> {
-            if (context == null) return "false";
-            String val = context.toString().trim();
-            return switch (val) {
-                case "1" -> "true";
-                case "0" -> "false";
-                default -> "false";
-            };
-        });
-
-        // Helper 2: Convert numeric to BigDecimal
-        handlebars.registerHelper("toBigDecimal", (context, options) -> {
-            if (context == null || context.toString().isBlank()) return "0";
-            try {
-                return new BigDecimal(context.toString()).toPlainString();
-            } catch (Exception e) {
-                return "0";
-            }
-        });
-
-        // Helper 3: Convert ISO Date → Julian Date (YYYYDDD)
-        handlebars.registerHelper("toJulian", (context, options) -> {
-            if (context == null || context.toString().isBlank()) return "";
-            try {
-                String input = context.toString().replace("T", " ").split("\\.")[0];
-                LocalDateTime date = LocalDateTime.parse(input, 
-                    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-                int dayOfYear = date.get(ChronoField.DAY_OF_YEAR);
-                return date.getYear() * 1000 + dayOfYear;
-            } catch (Exception e) {
-                return "InvalidDate";
-            }
-        });
-
-        // Load template
-        Template template = handlebars.compile("test");
-
-        // Sample data
-        Map<String, Object> data = Map.of(
-            "accountKey", "12345",
-            "overrideTypeCd", "1",
-            "secondaryTransactionType", "CREDIT",
-            "thirdPartyProviderCustomerName", "John Doe",
-            "transactionKey", "TX123",
-            "transactionType", "TRANSFER",
-            "transactionOriginationSystemCd", "SYSX",
-            "interbankSettlementDate", "2025-11-07T15:26:21.211"
+    // ✅ Quick Test
+    public static void main(String[] args) {
+        List<String> samples = List.of(
+            "2025-03-03 10:22:15.123",
+            "7/19/2019",
+            "2025-03-03T10:22:15.123-04:00",
+            "2025-03-03T10:22:15.123Z",
+            "2025-11-07 15:26:21.211",
+            "invalid-date"
         );
 
-        // Render
-        String json = template.apply(data);
-        System.out.println(json);
+        for (String sample : samples) {
+            System.out.printf("%-35s -> %s%n", sample, normalize(sample));
+        }
     }
 }
-
-
-
-
