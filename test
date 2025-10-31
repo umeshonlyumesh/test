@@ -1,22 +1,16 @@
 @ExtendWith(MockitoExtension.class)
 class EWSResponseForOnboardingTest {
 
-    @Mock
-    private RestClient restClient;
-    @Mock
-    private RestClient.RequestBodyUriSpec bodyUriSpec;
-    @Mock
-    private RestClient.RequestBodySpec bodySpec;
-    @Mock
-    private RestClient.RequestHeadersSpec<?> headersSpec;
-    @Mock
-    private RestClient.ResponseSpec responseSpec;
+    @Mock RestClient restClient;
+    @Mock RestClient.RequestBodyUriSpec bodyUriSpec;
+    @Mock RestClient.RequestBodySpec bodySpec;       // 👈 important
+    @Mock RestClient.RequestHeadersSpec<?> headersSpec;
+    @Mock RestClient.ResponseSpec responseSpec;
 
-    @InjectMocks
-    private EWSResponseForOnboarding service;
+    @InjectMocks EWSResponseForOnboarding service;
 
     @Test
-    void testRun_success() throws Exception {
+    void testRun() throws Exception {
         String mockResponse = "Success";
 
         // Step 1: POST
@@ -30,14 +24,13 @@ class EWSResponseForOnboardingTest {
         // Step 3: contentType()
         when(bodySpec.contentType(eq(MediaType.APPLICATION_JSON))).thenReturn(bodySpec);
 
-        // Step 4: body() → workaround with lenient and cast
-        // (force Mockito to accept any generic return)
-        lenient().when(bodySpec.body(any())).thenAnswer(inv -> headersSpec);
+        // ✅ Step 4: body() MUST return RequestBodySpec
+        when(bodySpec.body(any())).thenReturn(bodySpec);
 
-        // Step 5: retrieve()
-        when(headersSpec.retrieve()).thenReturn(responseSpec);
+        // ✅ Step 5: retrieve()
+        when(bodySpec.retrieve()).thenReturn(responseSpec);
 
-        // Step 6: body(String.class)
+        // ✅ Step 6: final body(String.class)
         when(responseSpec.body(String.class)).thenReturn(mockResponse);
 
         // Act
@@ -45,7 +38,7 @@ class EWSResponseForOnboardingTest {
 
         // Assert
         verify(restClient, times(1)).post();
-        verify(headersSpec, times(1)).retrieve();
+        verify(bodySpec, times(1)).retrieve();
         verify(responseSpec, times(1)).body(String.class);
     }
 }
