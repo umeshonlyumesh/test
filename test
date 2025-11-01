@@ -1,63 +1,56 @@
 @ExtendWith(MockitoExtension.class)
 class EWSResponseForOnboardingTest {
 
-    @Mock
-    private RestClient restClient;
+    @Mock private RestClient restClient;
+    @Mock private RestClient.RequestBodyUriSpec bodyUriSpec;
+    @Mock private RestClient.RequestBodySpec bodySpec;
+    @Mock private RestClient.RequestHeadersSpec<?> headersSpec;
+    @Mock private RestClient.ResponseSpec responseSpec;
 
-    @Mock
-    private RestClient.RequestBodyUriSpec bodyUriSpec;
-
-    @Mock
-    private RestClient.RequestBodySpec bodySpec;
-
-    @Mock
-    private RestClient.RequestHeadersSpec<?> headersSpec;
-
-    @Mock
-    private RestClient.ResponseSpec responseSpec;
-
-    @InjectMocks
-    private EWSResponseForOnboarding service;
+    @InjectMocks private EWSResponseForOnboarding service;
 
     @Test
     void testCallAVS_success() throws Exception {
-        // Arrange
         List<CompanyStatusUpdate> ewsResponseList = List.of(
                 new CompanyStatusUpdate("T00004444", null, "C")
         );
         String mockResponse = "Success";
 
-        // 🔹 Step 1: restClient.post() → bodyUriSpec
+        // 1️⃣ post() → bodyUriSpec
         when(restClient.post()).thenReturn(bodyUriSpec);
 
-        // 🔹 Step 2: uri(...) → bodySpec
-        when(bodyUriSpec.uri(eq("/company-enrollment/ews-update"))).thenReturn(bodySpec);
+        // 2️⃣ uri() → bodySpec
+        when(bodyUriSpec.uri(eq("/company-enrollment/ews-update")))
+                .thenReturn(bodySpec);
 
-        // 🔹 Step 3: contentType(...) → bodySpec
-        when(bodySpec.contentType(eq(MediaType.APPLICATION_JSON))).thenReturn(bodySpec);
+        // 3️⃣ contentType() → bodySpec
+        when(bodySpec.contentType(eq(MediaType.APPLICATION_JSON)))
+                .thenReturn(bodySpec);
 
-        // 🔹 Step 4: body(...) → headersSpec
-        // This is the critical mock that matches your service code!
-        when(bodySpec.body(eq(ewsResponseList))).thenReturn(headersSpec);
+        // 4️⃣ body() → headersSpec
+        // Tell Mockito this is the overload returning RequestHeadersSpec<?>
+        @SuppressWarnings("unchecked")
+        RestClient.RequestHeadersSpec<?> castedHeadersSpec = (RestClient.RequestHeadersSpec<?>) headersSpec;
+        when(bodySpec.body(eq(ewsResponseList))).thenReturn(castedHeadersSpec);
 
-        // 🔹 Step 5: retrieve() → responseSpec
+        // 5️⃣ retrieve() → responseSpec
         when(headersSpec.retrieve()).thenReturn(responseSpec);
 
-        // 🔹 Step 6: body(String.class) → final result
+        // 6️⃣ body(String.class) → final response
         when(responseSpec.body(String.class)).thenReturn(mockResponse);
 
-        // Act
+        // Reflectively call private method
         Method callAVSMethod = EWSResponseForOnboarding.class
                 .getDeclaredMethod("callAVS", List.class);
         callAVSMethod.setAccessible(true);
         callAVSMethod.invoke(service, ewsResponseList);
 
-        // Assert
-        verify(restClient, times(1)).post();
-        verify(bodyUriSpec, times(1)).uri("/company-enrollment/ews-update");
-        verify(bodySpec, times(1)).contentType(MediaType.APPLICATION_JSON);
-        verify(bodySpec, times(1)).body(eq(ewsResponseList));
-        verify(headersSpec, times(1)).retrieve();
-        verify(responseSpec, times(1)).body(String.class);
+        // ✅ Verify all fluent calls executed
+        verify(restClient).post();
+        verify(bodyUriSpec).uri("/company-enrollment/ews-update");
+        verify(bodySpec).contentType(MediaType.APPLICATION_JSON);
+        verify(bodySpec).body(eq(ewsResponseList));
+        verify(headersSpec).retrieve();
+        verify(responseSpec).body(String.class);
     }
 }
