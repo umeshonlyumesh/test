@@ -1,45 +1,61 @@
 package com.example.demo;
 
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import org.mockito.Answers;
 import org.springframework.http.MediaType;
-import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
-import java.util.List;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
-@Service
-public class EWSResponseForOnboarding {
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class EWSResponseForOnboardingTest {
 
-    private final RestClient restClient;
+    @Mock(answer = Answers.RETURNS_DEEP_STUBS)
+    RestClient restClient;
 
-    public EWSResponseForOnboarding(RestClient restClient) {
-        this.restClient = restClient;
+    @InjectMocks
+    EWSResponseForOnboarding service;
+
+    @Test
+    void run_callsAvsSuccessfully() throws Exception {
+        // Arrange the RestClient fluent chain with deep stubs
+        when(
+                restClient.post()
+                        .uri("/company-enrollment/ews-update")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(any())
+                        .retrieve()
+                        .body(String.class)
+        ).thenReturn("OK");
+
+        // Act & Assert: no exception should be thrown
+        service.run();
     }
 
-    /**
-     * Calls the AVS endpoint and updates the DB accordingly.
-     */
-    private void callAVS(List<String> ewsResponseList) {
-        String response;
-        List<String> ewsRespon = List.of("T00004444");
-        try {
-            response = restClient.post()
-                    .uri("/company-enrollment/ews-update")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(ewsRespon)
-                    .retrieve()
-                    .body(String.class);
-        } catch (Exception e) {
-            throw new RuntimeException("Error connecting to AVS: " + e.getMessage());
-        }
+    @Test
+    void run_throwsRuntimeException_whenAvsCallFails() {
+        // Arrange: make the very first call throw to simulate client failure
+        when(restClient.post()).thenThrow(new RuntimeException("boom"));
 
-
+        // Act + Assert
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> {
+            try {
+                service.run();
+            } catch (Exception e) {
+                if (e instanceof RuntimeException re) throw re;
+                throw new RuntimeException(e);
+            }
+        });
+        assertTrue(ex.getMessage().contains("Error connecting to AVS: boom"));
     }
-
-    public void run() throws Exception {
-        // In real code, this might read a file or DB to get data
-        List<String> ewsResponseList = List.of("T00004444");
-;
-        callAVS(ewsResponseList);
-    }
-
 }
