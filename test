@@ -3,12 +3,16 @@ class EWSResponseForOnboardingTest {
 
     @Mock
     private RestClient restClient;
+
     @Mock
     private RestClient.RequestBodyUriSpec bodyUriSpec;
+
     @Mock
     private RestClient.RequestBodySpec bodySpec;
+
     @Mock
-    private RestClient.RequestHeadersSpec<?> headersSpec;
+    private RestClient.RequestHeadersSpec<Object> headersSpec;
+
     @Mock
     private RestClient.ResponseSpec responseSpec;
 
@@ -17,31 +21,32 @@ class EWSResponseForOnboardingTest {
 
     @Test
     void testCallAVS_success() throws Exception {
-        List<CompanyStatusUpdate> ewsResponseList = List.of(
-                new CompanyStatusUpdate("T00004444", null, "C")
-        );
+        List<CompanyStatusUpdate> ewsResponseList =
+                List.of(new CompanyStatusUpdate("T00004444", null, "C"));
         String mockResponse = "Success";
 
-        // Step 1: post() → bodyUriSpec
+        // Step 1: post() -> bodyUriSpec
         when(restClient.post()).thenReturn(bodyUriSpec);
 
-        // Step 2: uri() → bodySpec
+        // Step 2: uri() -> bodySpec
         when(bodyUriSpec.uri(eq("/company-enrollment/ews-update")))
                 .thenReturn(bodySpec);
 
-        // Step 3: contentType() → bodySpec
+        // Step 3: contentType() -> bodySpec
         when(bodySpec.contentType(eq(MediaType.APPLICATION_JSON)))
                 .thenReturn(bodySpec);
 
-        // Step 4: body() → headersSpec
-        // ✅ Use (RequestHeadersSpec<?>) cast explicitly in the when() call
-        when((RestClient.RequestHeadersSpec<?>) bodySpec.body(eq(ewsResponseList)))
-                .thenReturn(headersSpec);
+        // Step 4: body() -> headersSpec
+        // ✅ FIX: Use Answer<Object> with suppressed generics warning
+        @SuppressWarnings("unchecked")
+        RestClient.RequestHeadersSpec<Object> anyHeadersSpec =
+                (RestClient.RequestHeadersSpec<Object>) headersSpec;
+        when(bodySpec.body(eq(ewsResponseList))).thenReturn(anyHeadersSpec);
 
-        // Step 5: retrieve() → responseSpec
+        // Step 5: retrieve() -> responseSpec
         when(headersSpec.retrieve()).thenReturn(responseSpec);
 
-        // Step 6: body(String.class) → final response
+        // Step 6: body(String.class) -> final response
         when(responseSpec.body(String.class)).thenReturn(mockResponse);
 
         // Act — call private method reflectively
@@ -50,7 +55,7 @@ class EWSResponseForOnboardingTest {
         callAVSMethod.setAccessible(true);
         callAVSMethod.invoke(service, ewsResponseList);
 
-        // Assert
+        // Assert — verify fluent chain execution
         verify(restClient).post();
         verify(bodyUriSpec).uri("/company-enrollment/ews-update");
         verify(bodySpec).contentType(MediaType.APPLICATION_JSON);
