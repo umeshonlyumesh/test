@@ -1,61 +1,107 @@
-package com.example.demo;
+package com.truist.core.integration.orchestration.strategy;
 
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
-import org.mockito.Answers;
-import org.springframework.http.MediaType;
-import org.springframework.web.client.RestClient;
+import com.truist.core.integration.model.CoreIntegrationResponse;
+import com.truist.core.integration.model.OrchestratedRequest;
 
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
+public interface OperationOrchestrator {
+    String getOperationType();
+    CoreIntegrationResponse orchestrate(OrchestratedRequest request);
+}
 
-@ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
-class EWSResponseForOnboardingTest {
 
-    @Mock(answer = Answers.RETURNS_DEEP_STUBS)
-    RestClient restClient;
 
-    @InjectMocks
-    EWSResponseForOnboarding service;
+package com.truist.core.integration.orchestration;
 
-    @Test
-    void run_callsAvsSuccessfully() throws Exception {
-        // Arrange the RestClient fluent chain with deep stubs
-        when(
-                restClient.post()
-                        .uri("/company-enrollment/ews-update")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .body(any())
-                        .retrieve()
-                        .body(String.class)
-        ).thenReturn("OK");
+import com.truist.core.integration.model.CoreIntegrationResponse;
+import com.truist.core.integration.model.OrchestratedRequest;
+import com.truist.core.integration.orchestration.strategy.OperationOrchestrator;
+import org.springframework.stereotype.Service;
+import java.util.*;
+import java.util.stream.Collectors;
 
-        // Act & Assert: no exception should be thrown
-        service.run();
+@Service
+public class OrchestrationService {
+
+    private final Map<String, OperationOrchestrator> orchestratorMap;
+
+    public OrchestrationService(List<OperationOrchestrator> orchestrators) {
+        this.orchestratorMap = orchestrators.stream()
+                .collect(Collectors.toMap(OperationOrchestrator::getOperationType, o -> o));
+        System.out.println("✅ Registered orchestrators: " + orchestratorMap.keySet());
     }
 
-    @Test
-    void run_throwsRuntimeException_whenAvsCallFails() {
-        // Arrange: make the very first call throw to simulate client failure
-        when(restClient.post()).thenThrow(new RuntimeException("boom"));
+    public CoreIntegrationResponse orchestrate(OrchestratedRequest request) {
+        OperationOrchestrator orchestrator = orchestratorMap.get(request.getOperationType());
+        if (orchestrator == null) {
+            throw new IllegalArgumentException("No orchestrator found for operation: " + request.getOperationType());
+        }
+        return orchestrator.orchestrate(package com.truist.core.integration.orchestration.strategy.impl;
 
-        // Act + Assert
-        RuntimeException ex = assertThrows(RuntimeException.class, () -> {
-            try {
-                service.run();
-            } catch (Exception e) {
-                if (e instanceof RuntimeException re) throw re;
-                throw new RuntimeException(e);
-            }
-        });
-        assertTrue(ex.getMessage().contains("Error connecting to AVS: boom"));
+import com.truist.core.integration.model.*;
+import com.truist.core.integration.orchestration.OperationExecutor;
+import com.truist.core.integration.orchestration.OperationExecutorRegistry;
+import com.truist.core.integration.orchestration.strategy.OperationOrchestrator;
+import org.springframework.stereotype.Component;
+import java.util.*;
+import java.util.concurrent.*;
+
+@Component
+public class QualificationOrchestrator implements OperationOrchestrator {
+
+    private final OperationExecutorRegistry registry;
+    private final ExecutorService executor = Executors.newFixedThreadPool(3);
+
+    public QualificationOrchestrator(OperationExecutorRegistry registry) {
+        this.registry = registry;
     }
+
+    @Override
+    public String getOperationType() { return "Qualification"; }
+
+    @Override
+    public CoreIntegrationResponse orchestrate(OrchestratedRequest request) {
+        QualificationRequest payload = (QualificationRequest) request.getRequestPayload();
+        Header header = request.getHeader();
+
+        List<CompletableFuture<Map<String, Object>>> tasks = new ArrayList<>();
+
+        if (payload.getEnrichmentInfo() != null)
+            tasks.add(CompletableFuture.supplyAsync(() ->
+                callSdk("Enrichment", header, payload.getEnrichmentInfo()), executor));
+
+        if (payload.getAccountValidationInfo() != null)
+            tasks.add(CompletableFuture.supplyAsync(() ->
+                callSdk("AccountValidation", header, payload.getAccountValidationInfo()), executor));
+
+        if (payload.getBalanceEnquiryInfo() != null)
+            tasks.add(CompletableFuture.supplyAsync(() ->
+                callSdk("BalanceEnquiry", header, payload.getBalanceEnquiryInfo()), executor));
+
+        CompletableFuture.allOf(tasks.toArray(new CompletableFuture[0])).join();
+
+        Map<String, Object> combined = new LinkedHashMap<>();
+        for (CompletableFuture<Map<String, Object>> f : tasks)
+            try { combined.putAll(f.get()); } catch (Exception ignored) {}
+
+        return CoreIntegrationResponse.success(header,
+                QualificationCombinedResponse.builder().responses(combined).build());
+    }
+
+    private Map<String, Object> callSdk(String op, Header header, Object payload) {
+        OperationExecutor sdk = registry.getExecutor(op);
+        if (sdk == null)
+            return Map.of(op, Map.of("error", "Executor not found"));
+        OrchestratedRequest subReq = OrchestratedRequest.builder()
+                .operationType(op)
+                .header(header)
+                .requestPayload(payload)
+                .build();
+        Object result = sdk.execute(subReq);
+        return Map.of(op, result);
+    }
+}
+
+
+
+
 }
