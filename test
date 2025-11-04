@@ -1,107 +1,223 @@
-package com.truist.core.integration.orchestration.strategy;
+package com.truist.core.integration.util;
 
-import com.truist.core.integration.model.CoreIntegrationResponse;
-import com.truist.core.integration.model.OrchestratedRequest;
+import com.truist.core.integration.model.*;
+import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
 
-public interface OperationOrchestrator {
-    String getOperationType();
-    CoreIntegrationResponse orchestrate(OrchestratedRequest request);
-}
+class RequestBuilderTest {
 
+    private final RequestBuilder builder = new RequestBuilder();
 
+    @Test
+    void shouldBuildOrchestratedRequestCorrectly() {
+        Header header = Header.builder().requestId("REQ10").sourceId("CORE").build();
+        FraudRequest payload = FraudRequest.builder().customerId("C007").build();
 
-package com.truist.core.integration.orchestration;
+        OrchestratedRequest request = builder.build("FraudCheck", header, payload);
 
-import com.truist.core.integration.model.CoreIntegrationResponse;
-import com.truist.core.integration.model.OrchestratedRequest;
-import com.truist.core.integration.orchestration.strategy.OperationOrchestrator;
-import org.springframework.stereotype.Service;
-import java.util.*;
-import java.util.stream.Collectors;
-
-@Service
-public class OrchestrationService {
-
-    private final Map<String, OperationOrchestrator> orchestratorMap;
-
-    public OrchestrationService(List<OperationOrchestrator> orchestrators) {
-        this.orchestratorMap = orchestrators.stream()
-                .collect(Collectors.toMap(OperationOrchestrator::getOperationType, o -> o));
-        System.out.println("✅ Registered orchestrators: " + orchestratorMap.keySet());
+        assertEquals("FraudCheck", request.getOperationType());
+        assertEquals("REQ10", request.getHeader().getRequestId());
+        assertEquals("C007", ((FraudRequest) request.getRequestPayload()).getCustomerId());
     }
-
-    public CoreIntegrationResponse orchestrate(OrchestratedRequest request) {
-        OperationOrchestrator orchestrator = orchestratorMap.get(request.getOperationType());
-        if (orchestrator == null) {
-            throw new IllegalArgumentException("No orchestrator found for operation: " + request.getOperationType());
-        }
-        return orchestrator.orchestrate(package com.truist.core.integration.orchestration.strategy.impl;
+}
+package com.truist.core.integration.orchestration.strategy.impl;
 
 import com.truist.core.integration.model.*;
 import com.truist.core.integration.orchestration.OperationExecutor;
 import com.truist.core.integration.orchestration.OperationExecutorRegistry;
-import com.truist.core.integration.orchestration.strategy.OperationOrchestrator;
-import org.springframework.stereotype.Component;
-import java.util.*;
-import java.util.concurrent.*;
+import org.junit.jupiter.api.*;
+import org.mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-@Component
-public class QualificationOrchestrator implements OperationOrchestrator {
+class PostingOrchestratorTest {
 
-    private final OperationExecutorRegistry registry;
-    private final ExecutorService executor = Executors.newFixedThreadPool(3);
+    @Mock
+    private OperationExecutorRegistry registry;
 
-    public QualificationOrchestrator(OperationExecutorRegistry registry) {
-        this.registry = registry;
+    @Mock
+    private OperationExecutor postingExecutor;
+
+    @InjectMocks
+    private PostingOrchestrator orchestrator;
+
+    @BeforeEach
+    void setup() {
+        MockitoAnnotations.openMocks(this);
+        orchestrator = new PostingOrchestrator(registry);
+        when(registry.getExecutor("Posting")).thenReturn(postingExecutor);
     }
 
-    @Override
-    public String getOperationType() { return "Qualification"; }
-
-    @Override
-    public CoreIntegrationResponse orchestrate(OrchestratedRequest request) {
-        QualificationRequest payload = (QualificationRequest) request.getRequestPayload();
-        Header header = request.getHeader();
-
-        List<CompletableFuture<Map<String, Object>>> tasks = new ArrayList<>();
-
-        if (payload.getEnrichmentInfo() != null)
-            tasks.add(CompletableFuture.supplyAsync(() ->
-                callSdk("Enrichment", header, payload.getEnrichmentInfo()), executor));
-
-        if (payload.getAccountValidationInfo() != null)
-            tasks.add(CompletableFuture.supplyAsync(() ->
-                callSdk("AccountValidation", header, payload.getAccountValidationInfo()), executor));
-
-        if (payload.getBalanceEnquiryInfo() != null)
-            tasks.add(CompletableFuture.supplyAsync(() ->
-                callSdk("BalanceEnquiry", header, payload.getBalanceEnquiryInfo()), executor));
-
-        CompletableFuture.allOf(tasks.toArray(new CompletableFuture[0])).join();
-
-        Map<String, Object> combined = new LinkedHashMap<>();
-        for (CompletableFuture<Map<String, Object>> f : tasks)
-            try { combined.putAll(f.get()); } catch (Exception ignored) {}
-
-        return CoreIntegrationResponse.success(header,
-                QualificationCombinedResponse.builder().responses(combined).build());
-    }
-
-    private Map<String, Object> callSdk(String op, Header header, Object payload) {
-        OperationExecutor sdk = registry.getExecutor(op);
-        if (sdk == null)
-            return Map.of(op, Map.of("error", "Executor not found"));
-        OrchestratedRequest subReq = OrchestratedRequest.builder()
-                .operationType(op)
-                .header(header)
+    @Test
+    void shouldExecutePostingSuccessfully() {
+        DepositRequest payload = DepositRequest.builder().accountNumber("123").amount(500.0).build();
+        OrchestratedRequest request = OrchestratedRequest.builder()
+                .operationType("Posting")
+                .header(Header.builder().requestId("R3").build())
                 .requestPayload(payload)
                 .build();
-        Object result = sdk.execute(subReq);
-        return Map.of(op, result);
+
+        when(postingExecutor.execute(any())).thenReturn(
+                DepositResponse.builder().status("POSTED").confirmationId("CONF1").build()
+        );
+
+        CoreIntegrationResponse response = orchestrator.orchestrate(request);
+        assertEquals("SUCCESS", response.getStatus());
+        assertTrue(response.getPayload() instanceof DepositResponse);
+    }
+}package com.truist.core.integration.orchestration.strategy.impl;
+
+import com.truist.core.integration.model.*;
+import com.truist.core.integration.orchestration.OperationExecutor;
+import com.truist.core.integration.orchestration.OperationExecutorRegistry;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.*;
+import java.util.*;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+class QualificationOrchestratorTest {
+
+    @Mock
+    private OperationExecutorRegistry registry;
+
+    @Mock
+    private OperationExecutor enrichmentExecutor;
+    @Mock
+    private OperationExecutor accountValidationExecutor;
+    @Mock
+    private OperationExecutor balanceEnquiryExecutor;
+
+    @InjectMocks
+    private QualificationOrchestrator orchestrator;
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+        orchestrator = new QualificationOrchestrator(registry);
+
+        when(registry.getExecutor("Enrichment")).thenReturn(enrichmentExecutor);
+        when(registry.getExecutor("AccountValidation")).thenReturn(accountValidationExecutor);
+        when(registry.getExecutor("BalanceEnquiry")).thenReturn(balanceEnquiryExecutor);
+    }
+
+    @Test
+    void shouldExecuteAllThreeSdksWhenAllObjectsPresent() {
+        // Arrange
+        QualificationRequest payload = QualificationRequest.builder()
+                .enrichmentInfo(EnrichmentRequest.builder().customerId("C123").build())
+                .accountValidationInfo(AccountValidationRequest.builder().accountNumber("111").build())
+                .balanceEnquiryInfo(BalanceEnquiryRequest.builder().accountNumber("222").build())
+                .build();
+
+        OrchestratedRequest request = OrchestratedRequest.builder()
+                .operationType("Qualification")
+                .header(Header.builder().requestId("REQ1").sourceId("CORE").build())
+                .requestPayload(payload)
+                .build();
+
+        when(enrichmentExecutor.execute(any())).thenReturn(Map.of("enrichment", "OK"));
+        when(accountValidationExecutor.execute(any())).thenReturn(Map.of("accountValidation", "OK"));
+        when(balanceEnquiryExecutor.execute(any())).thenReturn(Map.of("balance", "OK"));
+
+        // Act
+        CoreIntegrationResponse response = orchestrator.orchestrate(request);
+
+        // Assert
+        assertNotNull(response);
+        assertEquals("SUCCESS", response.getStatus());
+        assertTrue(response.getPayload() instanceof QualificationCombinedResponse);
+        QualificationCombinedResponse combined = (QualificationCombinedResponse) response.getPayload();
+        assertEquals(3, combined.getResponses().size());
+    }
+
+    @Test
+    void shouldHandleMissingSdkGracefully() {
+        // Arrange
+        when(registry.getExecutor("Enrichment")).thenReturn(null);
+        QualificationRequest payload = QualificationRequest.builder()
+                .enrichmentInfo(EnrichmentRequest.builder().customerId("C123").build())
+                .build();
+
+        OrchestratedRequest request = OrchestratedRequest.builder()
+                .operationType("Qualification")
+                .header(Header.builder().requestId("REQ2").build())
+                .requestPayload(payload)
+                .build();
+
+        // Act
+        CoreIntegrationResponse response = orchestrator.orchestrate(request);
+
+        // Assert
+        assertEquals("SUCCESS", response.getStatus());
+        QualificationCombinedResponse combined = (QualificationCombinedResponse) response.getPayload();
+        assertTrue(combined.getResponses().containsKey("package com.truist.core.integration.orchestration.strategy.impl;
+
+import com.truist.core.integration.model.*;
+import com.truist.core.integration.orchestration.OperationExecutor;
+import com.truist.core.integration.orchestration.OperationExecutorRegistry;
+import org.junit.jupiter.api.*;
+import org.mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+class FraudOrchestratorTest {
+
+    @Mock
+    private OperationExecutorRegistry registry;
+
+    @Mock
+    private OperationExecutor fraudExecutor;
+
+    @InjectMocks
+    private FraudOrchestrator orchestrator;
+
+    @BeforeEach
+    void init() {
+        MockitoAnnotations.openMocks(this);
+        orchestrator = new FraudOrchestrator(registry);
+        when(registry.getExecutor("FraudCheck")).thenReturn(fraudExecutor);
+    }
+
+    @Test
+    void shouldInvokeFraudSdkSuccessfully() {
+        FraudRequest payload = FraudRequest.builder().customerId("C101").build();
+        OrchestratedRequest request = OrchestratedRequest.builder()
+                .operationType("FraudCheck")
+                .header(Header.builder().requestId("R1").build())
+                .requestPayload(payload)
+                .build();
+
+        when(fraudExecutor.execute(any())).thenReturn(FraudResponse.builder()
+                .customerId("C101").fraudScore(5).riskLevel("LOW").build());
+
+        CoreIntegrationResponse response = orchestrator.orchestrate(request);
+
+        assertNotNull(response);
+        assertEquals("SUCCESS", response.getStatus());
+        assertTrue(response.getPayload() instanceof FraudResponse);
+    }
+
+    @Test
+    void shouldThrowWhenSdkNotFound() {
+        when(registry.getExecutor("FraudCheck")).thenReturn(null);
+
+        OrchestratedRequest req = OrchestratedRequest.builder()
+                .operationType("FraudCheck")
+                .header(Header.builder().requestId("R2").build())
+                .requestPayload(FraudRequest.builder().customerId("C404").build())
+                .build();
+
+        assertThrows(IllegalArgumentException.class, () -> orchestrator.orchestrate(req));
     }
 }
 
 
 
+b
 
-}
+ 
+	 
+
+
