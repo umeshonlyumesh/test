@@ -1,56 +1,55 @@
 package com.example.awssecrets;
 
-import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.retry.annotation.EnableRetry;
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
+import software.amazon.awssdk.services.secretsmanager.SecretsManagerClientBuilder;
+import software.amazon.awssdk.utils.StringUtils;
 
-import java.time.Duration;
-import java.util.List;
+import java.net.URI;
 
-@ConfigurationProperties(prefix = "aws.secrets")
-public class AwsSecretsProperties {
+@AutoConfiguration
+@EnableConfigurationProperties(AwsSecretsProperties.class)
+@EnableRetry
+public class AwsSecretsAutoConfiguration {
 
-    /** AWS region, e.g. "us-east-1". If empty, AWS default provider chain is used. */
-    private String region;
-
-    /** Optional endpoint (LocalStack/testing). */
-    private String endpoint;
-
-    /** If true, preload configured secrets on startup and publish as properties. */
-    private boolean preload = true;
-
-    /** Optional refresh interval. If null/zero, no refresh. */
-    private Duration refreshInterval;
-
-    /** Startup preload buckets (all optional). */
-    private Preload preloadSpec = new Preload();
-
-    public static class Preload {
-        /** Secret keys (names) for string/JSON secrets. */
-        private List<String> textKeys;
-        /** Secret keys (names) for binary secrets. */
-        private List<String> binaryKeys;
-        /** Secret ARNs for string/JSON secrets. */
-        private List<String> arns;
-        /** Property prefix applied to published keys, e.g. "db" → db.username. */
-        private String propertyPrefix;
-
-        public List<String> getTextKeys() { return textKeys; }
-        public void setTextKeys(List<String> textKeys) { this.textKeys = textKeys; }
-        public List<String> getBinaryKeys() { return binaryKeys; }
-        public void setBinaryKeys(List<String> binaryKeys) { this.binaryKeys = binaryKeys; }
-        public List<String> getArns() { return arns; }
-        public void setArns(List<String> arns) { this.arns = arns; }
-        public String getPropertyPrefix() { return propertyPrefix; }
-        public void setPropertyPrefix(String propertyPrefix) { this.propertyPrefix = propertyPrefix; }
+    @Bean
+    @ConditionalOnMissingBean
+    public SecretsCache secretsCache() {
+        return new SecretsCache();
     }
 
-    public String getRegion() { return region; }
-    public void setRegion(String region) { this.region = region; }
-    public String getEndpoint() { return endpoint; }
-    public void setEndpoint(String endpoint) { this.endpoint = endpoint; }
-    public boolean isPreload() { return preload; }
-    public void setPreload(boolean preload) { this.preload = preload; }
-    public Duration getRefreshInterval() { return refreshInterval; }
-    public void setRefreshInterval(Duration refreshInterval) { this.refreshInterval = refreshInterval; }
-    public Preload getPreloadSpec() { return preloadSpec; }
-    public void setPreloadSpec(Preload preloadSpec) { this.preloadSpec = preloadSpec; }
+    @Bean
+    @ConditionalOnMissingBean
+    public SecretsManagerClient secretsManagerClient(AwsSecretsProperties props) {
+        SecretsManagerClientBuilder b = SecretsManagerClient.builder()
+                .credentialsProvider(DefaultCredentialsProvider.create());
+        if (!StringUtils.isBlank(props.getRegion())) {
+            b = b.region(Region.of(props.getRegion()));
+        }
+        if (!StringUtils.isBlank(props.getEndpoint())) {
+            b = b.endpointOverride(URI.create(props.getEndpoint()));
+        }
+        return b.build();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public SecretManagerService secretManagerService(SecretsManagerClient client, SecretsCache cache) {
+        return new SecretManagerService(client, cache);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public SecretsStartupLoader secretsStartupLoader(
+            SecretManagerService service,
+            SecretsCache cache,
+            AwsSecretsProperties props) {
+        return new SecretsStartupLoader(service, cache, props);
+    }
 }
