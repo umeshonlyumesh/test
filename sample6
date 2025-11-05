@@ -1,125 +1,84 @@
-package com.truist.core.integration.orchestration.impl;
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
 
-import com.truist.core.integration.model.*;
-import com.truist.core.integration.orchestration.OperationExecutor;
-import com.truist.core.integration.orchestration.OperationExecutorRegistry;
-import com.truist.core.integration.orchestration.strategy.impl.FraudCheckExecutor;
-import com.truist.core.integration.exception.SdkException;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.*;
+  <groupId>com.example</groupId>
+  <artifactId>aws-secrets-sdk</artifactId>
+  <version>1.0.0</version>
+  <name>AWS Secrets SDK</name>
+  <description>SDK to get AWS Secrets by key, binary by key, and by ARN; with optional startup preload.</description>
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+  <properties>
+    <java.version>17</java.version>
+    <spring.boot.version>3.3.4</spring.boot.version>
+    <aws.sdk.version>2.25.58</aws.sdk.version>
+  </properties>
 
-class FraudCheckExecutorTest {
+  <dependencies>
+    <!-- Spring Boot auto-config support -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-autoconfigure</artifactId>
+      <version>${spring.boot.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-context</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.retry</groupId>
+      <artifactId>spring-retry</artifactId>
+      <version>2.0.8</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-configuration-processor</artifactId>
+      <version>${spring.boot.version}</version>
+      <optional>true</optional>
+    </dependency>
 
-    @Mock
-    private OperationExecutorRegistry registry;
+    <!-- AWS SDK v2 -->
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>secretsmanager</artifactId>
+      <version>${aws.sdk.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>sts</artifactId>
+      <version>${aws.sdk.version}</version>
+      <optional>true</optional>
+    </dependency>
 
-    @Mock
-    private OperationExecutor fraudExecutor;
+    <!-- JSON flattening for string secrets -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
 
-    private FraudCheckExecutor fraudCheckExecutor;
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+      <version>2.0.16</version>
+    </dependency>
+  </dependencies>
 
-    @BeforeEach
-    void setUp() {
-        MockitoAnnotations.openMocks(this);
-        fraudCheckExecutor = new FraudCheckExecutor(registry);
-    }
-
-    @Test
-    void shouldReturnSuccessWhenExecutorReturnsValidResponse() {
-        // Arrange
-        FraudRequest requestPayload = FraudRequest.builder().customerId("C1001").build();
-        Header header = Header.builder().requestId("R-001").sourceId("CORE").build();
-
-        FraudResponse fraudResponse = FraudResponse.builder()
-                .returnCode("00")
-                .riskLevel("LOW")
-                .build();
-
-        OrchestratedRequest orchestratedRequest = OrchestratedRequest.builder()
-                .operationType(OperationType.FraudCheck.name())
-                .header(header)
-                .requestPayload(requestPayload)
-                .build();
-
-        when(registry.getExecutor(OperationType.FraudCheck.name())).thenReturn(fraudExecutor);
-        when(fraudExecutor.execute(any())).thenReturn(fraudResponse);
-
-        // Act
-        CoreIntegrationResponse response = fraudCheckExecutor.orchestrate(orchestratedRequest);
-
-        // Assert
-        assertNotNull(response);
-        assertEquals("SUCCESS", response.getStatus());
-        assertTrue(response.getPayload() instanceof java.util.Map);
-        verify(registry, times(1)).getExecutor(OperationType.FraudCheck.name());
-        verify(fraudExecutor, times(1)).execute(any());
-    }
-
-    @Test
-    void shouldReturnFailedWhenExecutorNotFound() {
-        // Arrange
-        FraudRequest payload = FraudRequest.builder().customerId("C2001").build();
-        Header header = Header.builder().requestId("R-002").build();
-        OrchestratedRequest req = OrchestratedRequest.builder()
-                .operationType(OperationType.FraudCheck.name())
-                .header(header)
-                .requestPayload(payload)
-                .build();
-
-        when(registry.getExecutor(OperationType.FraudCheck.name())).thenReturn(null);
-
-        // Act
-        CoreIntegrationResponse response = fraudCheckExecutor.orchestrate(req);
-
-        // Assert
-        assertNotNull(response);
-        assertEquals("FAILED", response.getStatus());
-        assertTrue(response.getErrorMessage().contains("CONFIG_ERROR"));
-        verify(registry, times(1)).getExecutor(OperationType.FraudCheck.name());
-        verify(fraudExecutor, never()).execute(any());
-    }
-
-    @Test
-    void shouldThrowSdkExceptionWhenExecutorThrowsSdkError() {
-        // Arrange
-        FraudRequest payload = FraudRequest.builder().customerId("C3001").build();
-        Header header = Header.builder().requestId("R-003").build();
-
-        OrchestratedRequest req = OrchestratedRequest.builder()
-                .operationType(OperationType.FraudCheck.name())
-                .header(header)
-                .requestPayload(payload)
-                .build();
-
-        when(registry.getExecutor(OperationType.FraudCheck.name())).thenReturn(fraudExecutor);
-        when(fraudExecutor.execute(any())).thenThrow(new SdkException("SDK-1001", "Downstream error", "API-ERR", header));
-
-        // Act & Assert
-        SdkException ex = assertThrows(SdkException.class, () -> fraudCheckExecutor.orchestrate(req));
-        assertEquals("SDK-1001", ex.getErrorCode());
-        assertTrue(ex.getMessage().contains("Downstream error"));
-    }
-
-    @Test
-    void shouldHandleGenericExceptionGracefully() {
-        // Arrange
-        FraudRequest payload = FraudRequest.builder().customerId("C4001").build();
-        Header header = Header.builder().requestId("R-004").build();
-
-        OrchestratedRequest req = OrchestratedRequest.builder()
-                .operationType(OperationType.FraudCheck.name())
-                .header(header)
-                .requestPayload(payload)
-                .build();
-
-        when(registry.getExecutor(OperationType.FraudCheck.name())).thenThrow(new RuntimeException("Unexpected failure"));
-
-        // Act & Assert
-        SdkException ex = assertThrows(SdkException.class, () -> fraudCheckExecutor.orchestrate(req));
-        assertEquals("Unexpected failure", ex.getMessage());
-    }
-}
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.11.0</version>
+        <configuration>
+          <source>${java.version}</source>
+          <target>${java.version}</target>
+          <compilerArgs>
+            <arg>-parameters</arg>
+          </compilerArgs>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>
