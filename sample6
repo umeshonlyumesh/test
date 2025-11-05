@@ -1,82 +1,32 @@
 package com.example.awssecrets;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.retry.annotation.Backoff;
-import org.springframework.retry.annotation.Retryable;
-import org.springframework.stereotype.Service;
-import software.amazon.awssdk.core.SdkBytes;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
-import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
-import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
+import java.net.URI;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
+@AutoConfiguration
+@EnableConfigurationProperties(AwsSecretsProperties.class)
+public class AwsSecretsAutoConfiguration {
 
-@Service
-public class SecretManagerService {
-
-    private final SecretsManagerClient client;
-    private final ObjectMapper mapper = new ObjectMapper();
-
-    public SecretManagerService(SecretsManagerClient client) {
-        this.client = client;
-    }
-
-    /** ✅ Fetch secret (string or JSON) using secret key */
-    @Retryable(maxAttempts = 3, backoff = @Backoff(delay = 500, multiplier = 2))
-    public Map<String, String> getSecret(String secretKey) {
-        GetSecretValueResponse response = client.getSecretValue(
-                GetSecretValueRequest.builder().secretId(secretKey).build());
-        return parseSecret(response);
-    }
-
-    /** ✅ Fetch binary secret using secret key */
-    @Retryable(maxAttempts = 3, backoff = @Backoff(delay = 500, multiplier = 2))
-    public byte[] getBinarySecret(String secretKey) {
-        GetSecretValueResponse response = client.getSecretValue(
-                GetSecretValueRequest.builder().secretId(secretKey).build());
-        if (response.secretBinary() != null) {
-            return response.secretBinary().asByteArray();
+    @Bean
+    public SecretsManagerClient secretsManagerClient(AwsSecretsProperties props) {
+        SecretsManagerClient.Builder builder = SecretsManagerClient.builder()
+                .credentialsProvider(DefaultCredentialsProvider.create());
+        if (props.getRegion() != null && !props.getRegion().isBlank()) {
+            builder.region(Region.of(props.getRegion()));
         }
-        if (response.secretString() != null) {
-            return response.secretString().getBytes(StandardCharsets.UTF_8);
+        if (props.getEndpoint() != null && !props.getEndpoint().isBlank()) {
+            builder.endpointOverride(URI.create(props.getEndpoint()));
         }
-        return new byte[0];
+        return builder.build();
     }
 
-    /** ✅ Fetch secret (string or JSON) using ARN */
-    @Retryable(maxAttempts = 3, backoff = @Backoff(delay = 500, multiplier = 2))
-    public Map<String, String> getSecretByArn(String secretArn) {
-        GetSecretValueResponse response = client.getSecretValue(
-                GetSecretValueRequest.builder().secretId(secretArn).build());
-        return parseSecret(response);
-    }
-
-    private Map<String, String> parseSecret(GetSecretValueResponse response) {
-        try {
-            if (response.secretString() != null) {
-                String raw = response.secretString().trim();
-                if (raw.startsWith("{") && raw.endsWith("}")) {
-                    Map<?, ?> json = mapper.readValue(raw, Map.class);
-                    Map<String, String> map = new HashMap<>();
-                    for (Map.Entry<?, ?> e : json.entrySet()) {
-                        map.put(e.getKey().toString(), e.getValue().toString());
-                    }
-                    return map;
-                } else {
-                    return Collections.singletonMap("value", raw);
-                }
-            } else if (response.secretBinary() != null) {
-                String encoded = Base64.getEncoder()
-                        .encodeToString(response.secretBinary().asByteArray());
-                return Collections.singletonMap("binary", encoded);
-            }
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to parse secret", e);
-        }
-        return Collections.emptyMap();
+    @Bean
+    public SecretManagerService secretManagerService(SecretsManagerClient client) {
+        return new SecretManagerService(client);
     }
 }
