@@ -1,55 +1,121 @@
 package com.example.awssecrets;
 
-import org.springframework.boot.autoconfigure.AutoConfiguration;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.context.annotation.Bean;
-import org.springframework.retry.annotation.EnableRetry;
-import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
-import software.amazon.awssdk.regions.Region;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
+import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
-import software.amazon.awssdk.services.secretsmanager.SecretsManagerClientBuilder;
-import software.amazon.awssdk.utils.StringUtils;
+import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
+import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
+import software.amazon.awssdk.services.secretsmanager.model.InternalServiceErrorException;
 
-import java.net.URI;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 
-@AutoConfiguration
-@EnableConfigurationProperties(AwsSecretsProperties.class)
-@EnableRetry
-public class AwsSecretsAutoConfiguration {
+/**
+ * Three canonical methods ONLY:
+ *  - getSecret(secretKey)        : text/JSON by key
+ *  - getBinarySecret(secretKey)  : binary by key
+ *  - getSecretByArn(secretArn)   : text/JSON by ARN
+ */
+public class SecretManagerService {
 
-    @Bean
-    @ConditionalOnMissingBean
-    public SecretsCache secretsCache() {
-        return new SecretsCache();
+    private final SecretsManagerClient client;
+    private final SecretsCache cache;
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    public SecretManagerService(SecretsManagerClient client, SecretsCache cache) {
+        this.client = client;
+        this.cache = cache;
     }
 
-    @Bean
-    @ConditionalOnMissingBean
-    public SecretsManagerClient secretsManagerClient(AwsSecretsProperties props) {
-        SecretsManagerClientBuilder b = SecretsManagerClient.builder()
-                .credentialsProvider(DefaultCredentialsProvider.create());
-        if (!StringUtils.isBlank(props.getRegion())) {
-            b = b.region(Region.of(props.getRegion()));
+    /** Fetch string/JSON secret by KEY (name). */
+    @Retryable(
+        value = { SdkClientException.class, InternalServiceErrorException.class },
+        maxAttempts = 3, backoff = @Backoff(delay = 500, multiplier = 2.0)
+    )
+    public Map<String, String> getSecret(String secretKey) {
+        Map<String, String> cached = cache.getText(secretKey);
+        if (cached != null) return cached;
+
+        GetSecretValueResponse resp = client.getSecretValue(
+                GetSecretValueRequest.builder().secretId(secretKey).build());
+
+        Map<String, String> map = parseStringOrJson(resp);
+        cache.putText(secretKey, map);
+        return map;
+    }
+
+    /** Fetch BINARY secret by KEY (name). */
+    @Retryable(
+        value = { SdkClientException.class, InternalServiceErrorException.class },
+        maxAttempts = 3, backoff = @Backoff(delay = 500, multiplier = 2.0)
+    )
+    public byte[] getBinarySecret(String secretKey) {
+        byte[] cached = cache.getBinary(secretKey);
+        if (cached != null) return cached;
+
+        GetSecretValueResponse resp = client.getSecretValue(
+                GetSecretValueRequest.builder().secretId(secretKey).build());
+
+        byte[] data;
+        if (resp.secretBinary() != null) {
+            data = resp.secretBinary().asByteArray();
+        } else if (resp.secretString() != null) {
+            data = resp.secretString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        } else {
+            data = new byte[0];
         }
-        if (!StringUtils.isBlank(props.getEndpoint())) {
-            b = b.endpointOverride(URI.create(props.getEndpoint()));
+        cache.putBinary(secretKey, data);
+        return data;
+    }
+
+    /** Fetch string/JSON secret by ARN. */
+    @Retryable(
+        value = { SdkClientException.class, InternalServiceErrorException.class },
+        maxAttempts = 3, backoff = @Backoff(delay = 500, multiplier = 2.0)
+    )
+    public Map<String, String> getSecretByArn(String secretArn) {
+        Map<String, String> cached = cache.getText(secretArn);
+        if (cached != null) return cached;
+
+        GetSecretValueResponse resp = client.getSecretValue(
+                GetSecretValueRequest.builder().secretId(secretArn).build());
+
+        Map<String, String> map = parseStringOrJson(resp);
+        cache.putText(secretArn, map);
+        return map;
+    }
+
+    /** Helper: parse string/JSON, or convert binary to base64 if needed. */
+    private Map<String, String> parseStringOrJson(GetSecretValueResponse resp) {
+        if (resp.secretString() != null) {
+            String raw = resp.secretString().trim();
+            // Try JSON
+            if ((raw.startsWith("{") && raw.endsWith("}")) || (raw.startsWith("[") && raw.endsWith("]"))) {
+                try {
+                    Map<?, ?> m = mapper.readValue(raw, Map.class);
+                    Map<String, String> out = new HashMap<>();
+                    for (Map.Entry<?, ?> e : m.entrySet()) {
+                        if (e.getKey() != null && e.getValue() != null) {
+                            out.put(e.getKey().toString(), String.valueOf(e.getValue()));
+                        }
+                    }
+                    return out;
+                } catch (Exception ignore) {
+                    // not JSON → fall through
+                }
+            }
+            return Collections.singletonMap("value", raw);
         }
-        return b.build();
-    }
-
-    @Bean
-    @ConditionalOnMissingBean
-    public SecretManagerService secretManagerService(SecretsManagerClient client, SecretsCache cache) {
-        return new SecretManagerService(client, cache);
-    }
-
-    @Bean
-    @ConditionalOnMissingBean
-    public SecretsStartupLoader secretsStartupLoader(
-            SecretManagerService service,
-            SecretsCache cache,
-            AwsSecretsProperties props) {
-        return new SecretsStartupLoader(service, cache, props);
+        if (resp.secretBinary() != null) {
+            SdkBytes sb = resp.secretBinary();
+            String b64 = Base64.getEncoder().encodeToString(sb.asByteArray());
+            return Collections.singletonMap("binary", b64);
+        }
+        return Collections.emptyMap();
     }
 }
