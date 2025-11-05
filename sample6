@@ -1,93 +1,82 @@
 package com.example.awssecrets;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.context.event.ContextRefreshedEvent;
-import org.springframework.context.event.EventListener;
-import org.springframework.core.env.ConfigurableEnvironment;
-import org.springframework.core.env.MapPropertySource;
-import org.springframework.util.CollectionUtils;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
+import org.springframework.stereotype.Service;
+import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
+import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
+import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
-import java.time.Duration;
+import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.*;
 
-public class SecretsStartupLoader {
+@Service
+public class SecretManagerService {
 
-    private static final Logger log = LoggerFactory.getLogger(SecretsStartupLoader.class);
+    private final SecretsManagerClient client;
+    private final ObjectMapper mapper = new ObjectMapper();
 
-    private final SecretManagerService service;
-    private final SecretsCache cache;
-    private final AwsSecretsProperties props;
-
-    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-        Thread t = new Thread(r, "aws-secrets-refresh");
-        t.setDaemon(true);
-        return t;
-    });
-
-    public SecretsStartupLoader(SecretManagerService service, SecretsCache cache, AwsSecretsProperties props) {
-        this.service = service;
-        this.cache = cache;
-        this.props = props;
+    public SecretManagerService(SecretsManagerClient client) {
+        this.client = client;
     }
 
-    @EventListener(ContextRefreshedEvent.class)
-    public void onContextRefreshed(ContextRefreshedEvent e) {
-        if (!props.isPreload()) return;
-        if (!(e.getApplicationContext().getEnvironment() instanceof ConfigurableEnvironment env)) return;
-
-        publishOnce(env);
-
-        Duration refresh = props.getRefreshInterval();
-        if (refresh != null && !refresh.isZero() && !refresh.isNegative()) {
-            long secs = refresh.toSeconds();
-            scheduler.scheduleAtFixedRate(() -> {
-                try { publishOnce(env); }
-                catch (Exception ex) { log.warn("Refresh failed: {}", ex.getMessage()); }
-            }, secs, secs, TimeUnit.SECONDS);
-        }
+    /** ✅ Fetch secret (string or JSON) using secret key */
+    @Retryable(maxAttempts = 3, backoff = @Backoff(delay = 500, multiplier = 2))
+    public Map<String, String> getSecret(String secretKey) {
+        GetSecretValueResponse response = client.getSecretValue(
+                GetSecretValueRequest.builder().secretId(secretKey).build());
+        return parseSecret(response);
     }
 
-    private void publishOnce(ConfigurableEnvironment env) {
-        AwsSecretsProperties.Preload p = props.getPreloadSpec();
-        if (p == null) return;
-
-        Map<String, Object> combined = new HashMap<>();
-        String prefix = (p.getPropertyPrefix() == null || p.getPropertyPrefix().isBlank())
-                ? "" : p.getPropertyPrefix() + ".";
-
-        if (!CollectionUtils.isEmpty(p.getTextKeys())) {
-            for (String k : p.getTextKeys()) {
-                Map<String,String> map = service.getSecret(k);
-                map.forEach((kk, vv) -> combined.put(prefix + k.replace('/', '.')
-                        + "." + kk, vv));
-            }
+    /** ✅ Fetch binary secret using secret key */
+    @Retryable(maxAttempts = 3, backoff = @Backoff(delay = 500, multiplier = 2))
+    public byte[] getBinarySecret(String secretKey) {
+        GetSecretValueResponse response = client.getSecretValue(
+                GetSecretValueRequest.builder().secretId(secretKey).build());
+        if (response.secretBinary() != null) {
+            return response.secretBinary().asByteArray();
         }
-        if (!CollectionUtils.isEmpty(p.getBinaryKeys())) {
-            for (String k : p.getBinaryKeys()) {
-                byte[] data = service.getBinarySecret(k);
-                combined.put(prefix + k.replace('/', '.') + ".binary", Base64.getEncoder().encodeToString(data));
-            }
+        if (response.secretString() != null) {
+            return response.secretString().getBytes(StandardCharsets.UTF_8);
         }
-        if (!CollectionUtils.isEmpty(p.getArns())) {
-            for (String arn : p.getArns()) {
-                Map<String,String> map = service.getSecretByArn(arn);
-                map.forEach((kk, vv) -> combined.put(prefix + arnFragment(arn) + "." + kk, vv));
-            }
-        }
-
-        if (!combined.isEmpty()) {
-            env.getPropertySources().addLast(new MapPropertySource("aws-secrets", combined));
-            log.info("Published {} AWS secret entries to Environment", combined.size());
-        }
+        return new byte[0];
     }
 
-    private String arnFragment(String arn) {
-        // best-effort suffix (safe for use in property keys)
-        int i = arn.lastIndexOf(':');
-        return (i > 0 ? arn.substring(i + 1) : arn).replace('/', '.');
+    /** ✅ Fetch secret (string or JSON) using ARN */
+    @Retryable(maxAttempts = 3, backoff = @Backoff(delay = 500, multiplier = 2))
+    public Map<String, String> getSecretByArn(String secretArn) {
+        GetSecretValueResponse response = client.getSecretValue(
+                GetSecretValueRequest.builder().secretId(secretArn).build());
+        return parseSecret(response);
+    }
+
+    private Map<String, String> parseSecret(GetSecretValueResponse response) {
+        try {
+            if (response.secretString() != null) {
+                String raw = response.secretString().trim();
+                if (raw.startsWith("{") && raw.endsWith("}")) {
+                    Map<?, ?> json = mapper.readValue(raw, Map.class);
+                    Map<String, String> map = new HashMap<>();
+                    for (Map.Entry<?, ?> e : json.entrySet()) {
+                        map.put(e.getKey().toString(), e.getValue().toString());
+                    }
+                    return map;
+                } else {
+                    return Collections.singletonMap("value", raw);
+                }
+            } else if (response.secretBinary() != null) {
+                String encoded = Base64.getEncoder()
+                        .encodeToString(response.secretBinary().asByteArray());
+                return Collections.singletonMap("binary", encoded);
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to parse secret", e);
+        }
+        return Collections.emptyMap();
     }
 }
