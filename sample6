@@ -1,84 +1,56 @@
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-  <modelVersion>4.0.0</modelVersion>
+package com.example.awssecrets;
 
-  <groupId>com.example</groupId>
-  <artifactId>aws-secrets-sdk</artifactId>
-  <version>1.0.0</version>
-  <name>AWS Secrets SDK</name>
-  <description>SDK to get AWS Secrets by key, binary by key, and by ARN; with optional startup preload.</description>
+import org.springframework.boot.context.properties.ConfigurationProperties;
 
-  <properties>
-    <java.version>17</java.version>
-    <spring.boot.version>3.3.4</spring.boot.version>
-    <aws.sdk.version>2.25.58</aws.sdk.version>
-  </properties>
+import java.time.Duration;
+import java.util.List;
 
-  <dependencies>
-    <!-- Spring Boot auto-config support -->
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-autoconfigure</artifactId>
-      <version>${spring.boot.version}</version>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework</groupId>
-      <artifactId>spring-context</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework.retry</groupId>
-      <artifactId>spring-retry</artifactId>
-      <version>2.0.8</version>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-configuration-processor</artifactId>
-      <version>${spring.boot.version}</version>
-      <optional>true</optional>
-    </dependency>
+@ConfigurationProperties(prefix = "aws.secrets")
+public class AwsSecretsProperties {
 
-    <!-- AWS SDK v2 -->
-    <dependency>
-      <groupId>software.amazon.awssdk</groupId>
-      <artifactId>secretsmanager</artifactId>
-      <version>${aws.sdk.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>software.amazon.awssdk</groupId>
-      <artifactId>sts</artifactId>
-      <version>${aws.sdk.version}</version>
-      <optional>true</optional>
-    </dependency>
+    /** AWS region, e.g. "us-east-1". If empty, AWS default provider chain is used. */
+    private String region;
 
-    <!-- JSON flattening for string secrets -->
-    <dependency>
-      <groupId>com.fasterxml.jackson.core</groupId>
-      <artifactId>jackson-databind</artifactId>
-    </dependency>
+    /** Optional endpoint (LocalStack/testing). */
+    private String endpoint;
 
-    <dependency>
-      <groupId>org.slf4j</groupId>
-      <artifactId>slf4j-api</artifactId>
-      <version>2.0.16</version>
-    </dependency>
-  </dependencies>
+    /** If true, preload configured secrets on startup and publish as properties. */
+    private boolean preload = true;
 
-  <build>
-    <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-compiler-plugin</artifactId>
-        <version>3.11.0</version>
-        <configuration>
-          <source>${java.version}</source>
-          <target>${java.version}</target>
-          <compilerArgs>
-            <arg>-parameters</arg>
-          </compilerArgs>
-        </configuration>
-      </plugin>
-    </plugins>
-  </build>
-</project>
+    /** Optional refresh interval. If null/zero, no refresh. */
+    private Duration refreshInterval;
+
+    /** Startup preload buckets (all optional). */
+    private Preload preloadSpec = new Preload();
+
+    public static class Preload {
+        /** Secret keys (names) for string/JSON secrets. */
+        private List<String> textKeys;
+        /** Secret keys (names) for binary secrets. */
+        private List<String> binaryKeys;
+        /** Secret ARNs for string/JSON secrets. */
+        private List<String> arns;
+        /** Property prefix applied to published keys, e.g. "db" → db.username. */
+        private String propertyPrefix;
+
+        public List<String> getTextKeys() { return textKeys; }
+        public void setTextKeys(List<String> textKeys) { this.textKeys = textKeys; }
+        public List<String> getBinaryKeys() { return binaryKeys; }
+        public void setBinaryKeys(List<String> binaryKeys) { this.binaryKeys = binaryKeys; }
+        public List<String> getArns() { return arns; }
+        public void setArns(List<String> arns) { this.arns = arns; }
+        public String getPropertyPrefix() { return propertyPrefix; }
+        public void setPropertyPrefix(String propertyPrefix) { this.propertyPrefix = propertyPrefix; }
+    }
+
+    public String getRegion() { return region; }
+    public void setRegion(String region) { this.region = region; }
+    public String getEndpoint() { return endpoint; }
+    public void setEndpoint(String endpoint) { this.endpoint = endpoint; }
+    public boolean isPreload() { return preload; }
+    public void setPreload(boolean preload) { this.preload = preload; }
+    public Duration getRefreshInterval() { return refreshInterval; }
+    public void setRefreshInterval(Duration refreshInterval) { this.refreshInterval = refreshInterval; }
+    public Preload getPreloadSpec() { return preloadSpec; }
+    public void setPreloadSpec(Preload preloadSpec) { this.preloadSpec = preloadSpec; }
+}
