@@ -1,5 +1,7 @@
-props.put(CommonClientConfigs.SECURITY_PROTOCOL_CONFIG, "SASL_SSL");
-props.put(SaslConfigs.SASL_MECHANISM, "PLAIN");
-props.put(SaslConfigs.SASL_JAAS_CONFIG,
-      "org.apache.kafka.common.security.plain.PlainLoginModule required " +
-      "username=\"" + props.getUsername() + "\" password=\"" + props.getPassword() + "\";");
+curl -v \
+  --cert client.keystore.p12:MyP12Pass \
+  --cert-type P12 \
+  --key client.keystore.p12:MyP12Pass \
+  --key-type P12 \
+  --cacert client.truststore.pem \
+  https://pea-core-api.default.svc.cluster.local:8080/hello
