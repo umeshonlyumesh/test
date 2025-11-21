@@ -4,4 +4,26 @@ curl -v \
   --key client.keystore.p12:MyP12Pass \
   --key-type P12 \
   --cacert client.truststore.pem \
+
+
+keytool -exportcert -rfc \
+  -keystore /etc/mtls/client-truststore.p12 \
+  -storepass <PASS> \
+  -alias <ALIAS> \
+  -file /etc/mtls/ca.pem
+
+
+
+keytool -list -v \
+  -keystore /etc/mtls/client-truststore.p12 \
+  -storepass <PASS>
+
+
+curl -v \
+  --cert /etc/mtls/client-keystore.p12:<PASS> \
+  --cert-type P12 \
+  --key /etc/mtls/client-keystore.p12:<PASS> \
+  --key-type P12 \
+  --cacert /etc/mtls/ca.pem \
   https://pea-core-api.default.svc.cluster.local:8080/hello
+
