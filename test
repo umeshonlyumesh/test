@@ -1,11 +1,5 @@
-for i in {1..1000}; do
-  curl -s -o /dev/null -w "%{time_total}\n" http://localhost:8080/health
-done > latency.txt
-
-start=$(date +%s)
-for i in {1..1000}; do curl -s -o /dev/null http://localhost:8080/health & done
-wait
-end=$(date +%s)
-elapsed=$((end-start))
-echo "Total time: $elapsed sec"
-echo "RPS: $((1000/elapsed))"
+props.put(CommonClientConfigs.SECURITY_PROTOCOL_CONFIG, "SASL_SSL");
+props.put(SaslConfigs.SASL_MECHANISM, "PLAIN");
+props.put(SaslConfigs.SASL_JAAS_CONFIG,
+      "org.apache.kafka.common.security.plain.PlainLoginModule required " +
+      "username=\"" + props.getUsername() + "\" password=\"" + props.getPassword() + "\";");
