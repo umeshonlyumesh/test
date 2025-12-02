@@ -1,6 +1,24 @@
-curl -v https://pez-core-api.pez-truist-dev1:8080/actuator/health \
-  --cert /opt/podcert/ptpkeystore.p12:PASSHERE \
-  --cert-type P12 \
-  --key /opt/podcert/ptpkeystore.p12:PASSHERE \
-  --key-type P12 \
-  --cacert /tmp/ca.pem
+<!-- Confluent Avro serializer stack -->
+<dependency>
+    <groupId>io.confluent</groupId>
+    <artifactId>kafka-avro-serializer</artifactId>
+    <version>7.7.1</version>
+</dependency>
+
+<dependency>
+    <groupId>io.confluent</groupId>
+    <artifactId>kafka-schema-registry-client</artifactId>
+    <version>7.7.1</version>
+</dependency>
+
+<dependency>
+    <groupId>io.confluent</groupId>
+    <artifactId>common-config</artifactId>
+    <version>7.7.1</version>
+</dependency>
+
+<dependency>
+    <groupId>io.confluent</groupId>
+    <artifactId>common-utils</artifactId>
+    <version>7.7.1</version>
+</dependency>
