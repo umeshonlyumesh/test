@@ -1,24 +1,121 @@
-<!-- Confluent Avro serializer stack -->
-<dependency>
-    <groupId>io.confluent</groupId>
-    <artifactId>kafka-avro-serializer</artifactId>
-    <version>7.7.1</version>
-</dependency>
+package com.example.demoavro.avro;
 
-<dependency>
-    <groupId>io.confluent</groupId>
-    <artifactId>kafka-schema-registry-client</artifactId>
-    <version>7.7.1</version>
-</dependency>
+import org.apache.avro.Schema;
+import org.apache.avro.SchemaParseException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.stereotype.Component;
 
-<dependency>
-    <groupId>io.confluent</groupId>
-    <artifactId>common-config</artifactId>
-    <version>7.7.1</version>
-</dependency>
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
-<dependency>
-    <groupId>io.confluent</groupId>
-    <artifactId>common-utils</artifactId>
-    <version>7.7.1</version>
-</dependency>
+@Component
+public class AvroSchemas {
+
+    private static final Logger log = LoggerFactory.getLogger(AvroSchemas.class);
+
+    private final Map<String, Schema> cache = new ConcurrentHashMap<>();
+    private volatile Schema employeeSchema;
+
+    @Value("${app.avro.schema-dir:}")
+    private String externalSchemaDir;
+
+    /**
+     * Backwards compatible accessor for the employee schema used by existing EmployeeProducer.
+     */
+    public Schema employeeSchema() {
+        if (employeeSchema == null) {
+            synchronized (this) {
+                if (employeeSchema == null) {
+                    employeeSchema = load("avro/employee-v1.avsc");
+                }
+            }
+        }
+        return employeeSchema;
+    }
+
+    /**
+     * Load an Avro schema from classpath or filesystem. Results are cached for reuse.
+     * Supported forms:
+     * - "avro/file.avsc" (classpath)
+     * - "classpath:avro/file.avsc"
+     * - "file:/absolute/or/relative/path/file.avsc" (file URI)
+     * - Absolute or relative filesystem path (e.g., "C:\\schemas\\x.avsc" or "/opt/schemas/x.avsc")
+     */
+    public Schema schema(String location) {
+        return cache.computeIfAbsent(location, this::load);
+    }
+
+    /**
+     * Resolve a schema by name. If an external directory is configured via app.avro.schema-dir,
+     * this method will first look for the file there; otherwise it falls back to classpath "avro/".
+     * It also accepts absolute paths, relative paths, and file:/ URIs directly.
+     * Example: schemaByName("customer-v1.avsc")
+     */
+    public Schema schemaByName(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            throw new IllegalArgumentException("fileName must not be null/blank");
+        }
+        // If caller already provided a path or URI, use it as-is
+        if (fileName.startsWith("classpath:") || fileName.startsWith("file:")) {
+            return schema(fileName);
+        }
+        Path p = Paths.get(fileName);
+        if (p.isAbsolute() || Files.exists(p)) {
+            return schema(fileName);
+        }
+        // Try external schema directory when configured
+        if (externalSchemaDir != null && !externalSchemaDir.isBlank()) {
+            Path dir = Paths.get(externalSchemaDir);
+            Path candidate = dir.resolve(fileName);
+            if (Files.exists(candidate)) {
+                return schema(candidate.toString());
+            }
+        }
+        // Fallback to classpath under resources/avro
+        return schema("avro/" + fileName);
+    }
+
+    private Schema load(String location) {
+        try {
+            if (location.startsWith("classpath:")) {
+                String cp = location.substring("classpath:".length());
+                return parseFromClasspath(cp);
+            }
+            if (location.startsWith("file:")) {
+                Path path = Paths.get(URI.create(location));
+                return parseFromFile(path);
+            }
+            Path path = Paths.get(location);
+            if (path.isAbsolute() || Files.exists(path)) {
+                return parseFromFile(path);
+            }
+            // Default to classpath
+            return parseFromClasspath(location);
+        } catch (IOException | SchemaParseException e) {
+            log.error("Failed to load Avro schema {}: {}", location, e.getMessage(), e);
+            throw new IllegalStateException("Cannot load Avro schema " + location, e);
+        }
+    }
+
+    private Schema parseFromClasspath(String classpathLocation) throws IOException {
+        ClassPathResource resource = new ClassPathResource(classpathLocation);
+        try (InputStream is = resource.getInputStream()) {
+            return new Schema.Parser().parse(is);
+        }
+    }
+
+    private Schema parseFromFile(Path path) throws IOException {
+        try (InputStream is = Files.newInputStream(path)) {
+            return new Schema.Parser().parse(is);
+        }
+    }
+}
