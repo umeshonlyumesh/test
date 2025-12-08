@@ -1,125 +1,124 @@
-import { Component, OnInit } from '@angular/core';
-import {
-  ApexAxisChartSeries,
-  ApexChart,
-  ApexXAxis,
-  ApexDataLabels,
-  ApexStroke,
-  ApexTitleSubtitle,
-  ApexLegend
-} from 'ng-apexcharts';
-import * as rawData from '../../assets/generated_records.json';
+package com.example.demoavro.consumer;
 
-export type ChartOptions = {
-  series: ApexAxisChartSeries;
-  chart: ApexChart;
-  xaxis: ApexXAxis;
-  dataLabels: ApexDataLabels;
-  stroke: ApexStroke;
-  title: ApexTitleSubtitle;
-  legend: ApexLegend;
-};
+import org.apache.avro.generic.GenericRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.errors.WakeupException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 
-@Component({
-  selector: 'app-event-chart',
-  templateUrl: './event-chart.component.html',
-  styleUrls: ['./event-chart.component.css']
-})
-export class EventChartComponent implements OnInit {
-  public chartOptions: Partial<ChartOptions>;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
+import java.time.Duration;
+import java.util.Arrays;
+import java.util.Properties;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-  constructor() {}
+@Component
+public class UnifiedConsumer {
 
-  ngOnInit(): void {
-    const grouped = this.processData((rawData as any).default);
-    const categories = Array.from(new Set(grouped.map((item: any) => item.time))).sort();
+    private static final Logger log = LoggerFactory.getLogger(UnifiedConsumer.class);
 
-    const types = Array.from(
-      new Set(grouped.flatMap((item: any) => Object.keys(item.counts)))
-    );
+    private final Properties consumerProperties;
 
-    const series = types.map(type => ({
-      name: type,
-      data: categories.map(time => {
-        const item = grouped.find(i => i.time === time);
-        return item?.counts[type] || 0;
-      })
-    }));
+    @Value("${app.topics.employee}")
+    private String employeeTopic;
 
-    this.chartOptions = {
-      series,
-      chart: {
-        height: 400,
-        type: 'line',
-        zoom: {
-          enabled: true,
-          type: 'x',
-          autoScaleYaxis: true
-        },
-        toolbar: {
-          show: true,
-          autoSelected: 'zoom',
-          tools: {
-            download: true,
-            selection: true,
-            zoom: true,
-            zoomin: true,
-            zoomout: true,
-            pan: true,
-            reset: true
-          },
-          export: {
-            csv: {
-              filename: 'event-type-data',
-              columnDelimiter: ',',
-              headerCategory: 'Interval',
-              headerValue: 'Count'
-            },
-            svg: {
-              filename: 'event-type-linechart'
-            },
-            png: {
-              filename: 'event-type-linechart'
-            }
-          }
+    @Value("${app.topics.employee-dlt}")
+    private String employeeDltTopic;
+
+    @Value("${app.kafka.consumer.enabled:true}")
+    private boolean enabled;
+
+    @Value("${app.kafka.consumer.poll-ms:1000}")
+    private long pollMs;
+
+    private KafkaConsumer<String, Object> consumer;
+    private Thread consumerThread;
+    private final AtomicBoolean running = new AtomicBoolean(false);
+
+    public UnifiedConsumer(Properties consumerProperties) {
+        this.consumerProperties = consumerProperties;
+    }
+
+    @PostConstruct
+    public void start() {
+        if (!enabled) {
+            log.info("UnifiedConsumer is disabled by configuration (app.kafka.consumer.enabled=false)");
+            return;
         }
-      },
-      dataLabels: {
-        enabled: false
-      },
-      stroke: {
-        curve: 'smooth'
-      },
-      title: {
-        text: 'Event Types per 5 Minute Interval',
-        align: 'left'
-      },
-      xaxis: {
-        categories
-      },
-      legend: {
-        position: 'top'
-      }
-    };
-  }
+        this.consumer = new KafkaConsumer<>(consumerProperties);
+        this.consumer.subscribe(Arrays.asList(employeeTopic, employeeDltTopic));
+        running.set(true);
+        this.consumerThread = new Thread(this::pollLoop, "unified-consumer-thread");
+        this.consumerThread.start();
+        log.info("UnifiedConsumer started; subscribed to topics: {}, {}", employeeTopic, employeeDltTopic);
+    }
 
-  processData(data: any[]): { time: string; counts: { [key: string]: number } }[] {
-    const grouped = new Map<string, { [key: string]: number }>();
+    private void pollLoop() {
+        try {
+            while (running.get()) {
+                ConsumerRecords<String, Object> records = consumer.poll(Duration.ofMillis(pollMs));
+                for (ConsumerRecord<String, Object> record : records) {
+                    handleRecord(record);
+                }
+            }
+        } catch (WakeupException we) {
+            if (running.get()) {
+                log.warn("Consumer wakeup due to unexpected condition: {}", we.getMessage());
+            }
+        } catch (Exception e) {
+            log.error("Error in consumer loop: {}", e.getMessage(), e);
+        } finally {
+            try {
+                consumer.close();
+            } catch (Exception e) {
+                log.warn("Error closing consumer: {}", e.getMessage());
+            }
+            log.info("UnifiedConsumer stopped");
+        }
+    }
 
-    data.forEach(event => {
-      const date = new Date(event.event_time);
-      const intervalMs = 5 * 60 * 1000;
-      const rounded = new Date(Math.floor(date.getTime() / intervalMs) * intervalMs);
-      const timeKey = `${rounded.getFullYear()}-${String(rounded.getMonth() + 1).padStart(2, '0')}-${String(rounded.getDate()).padStart(2, '0')} ${String(rounded.getHours()).padStart(2, '0')}:${String(rounded.getMinutes()).padStart(2, '0')}`;
+    private void handleRecord(ConsumerRecord<String, Object> record) {
+        Object value = record.value();
+        String key = record.key();
+        String topic = record.topic();
+        boolean isDlt = topic.equals(employeeDltTopic);
+        if (isDlt) {
+            log.error("Received message on DLT: topic={}, partition={}, offset={}, key={}, value={}",
+                    topic, record.partition(), record.offset(), key, value);
+            return;
+        }
+        if (value instanceof GenericRecord employee) {
+            log.info("Consumed Employee (Avro): key={}, name={} {}, dob={}, from partition={}, offset={}",
+                    key, employee.get("firstName"), employee.get("lastName"), employee.get("dob"), record.partition(), record.offset());
+        } else if (value instanceof String s) {
+            log.info("Consumed Employee (String): key={}, value='{}', from partition={}, offset={}",
+                    key, s, record.partition(), record.offset());
+        } else if (value == null) {
+            log.warn("Consumed null value: key={}, partition={}, offset={}", key, record.partition(), record.offset());
+        } else {
+            log.info("Consumed Employee (Unknown type {}): key={}, value={}, partition={}, offset={}",
+                    value.getClass().getName(), key, value, record.partition(), record.offset());
+        }
+    }
 
-      const type = event.meta_data?.type ?? 'UNKNOWN';
-      const counts = grouped.get(timeKey) || {};
-      counts[type] = (counts[type] || 0) + 1;
-      grouped.set(timeKey, counts);
-    });
-
-    return Array.from(grouped.entries())
-      .map(([time, counts]) => ({ time, counts }))
-      .sort((a, b) => a.time.localeCompare(b.time));
-  }
+    @PreDestroy
+    public void stop() {
+        if (!enabled) return;
+        running.set(false);
+        if (consumer != null) {
+            consumer.wakeup();
+        }
+        if (consumerThread != null) {
+            try {
+                consumerThread.join(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
 }
