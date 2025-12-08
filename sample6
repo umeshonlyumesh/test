@@ -1,32 +1,124 @@
-package com.example.awssecrets;
+package com.example.demoavro.producer;
 
-import org.springframework.boot.autoconfigure.AutoConfiguration;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.context.annotation.Bean;
-import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
-import java.net.URI;
+import com.example.demoavro.avro.AvroSchemas;
+import org.apache.avro.Schema;
+import org.apache.avro.generic.GenericData;
+import org.apache.avro.generic.GenericRecord;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
 
-@AutoConfiguration
-@EnableConfigurationProperties(AwsSecretsProperties.class)
-public class AwsSecretsAutoConfiguration {
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
-    @Bean
-    public SecretsManagerClient secretsManagerClient(AwsSecretsProperties props) {
-        SecretsManagerClient.Builder builder = SecretsManagerClient.builder()
-                .credentialsProvider(DefaultCredentialsProvider.create());
-        if (props.getRegion() != null && !props.getRegion().isBlank()) {
-            builder.region(Region.of(props.getRegion()));
-        }
-        if (props.getEndpoint() != null && !props.getEndpoint().isBlank()) {
-            builder.endpointOverride(URI.create(props.getEndpoint()));
-        }
-        return builder.build();
+@Service
+public class UnifiedProducer {
+
+    private static final Logger log = LoggerFactory.getLogger(UnifiedProducer.class);
+
+    private final KafkaProducer<String, Object> kafkaProducer;
+    private final AvroSchemas schemas;
+
+    @Value("${app.messaging.format:avro}")
+    private String messagingFormat;
+
+    public UnifiedProducer(KafkaProducer<String, Object> kafkaProducer, AvroSchemas schemas) {
+        this.kafkaProducer = kafkaProducer;
+        this.schemas = schemas;
     }
 
-    @Bean
-    public SecretManagerService secretManagerService(SecretsManagerClient client) {
-        return new SecretManagerService(client);
+    private boolean isAvro() {
+        return "avro".equalsIgnoreCase(messagingFormat);
+    }
+
+    public CompletableFuture<RecordMetadata> sendAvro(String topic, String schemaFile, String key, Map<String, Object> payload) {
+        if (!isAvro()) {
+            throw new IllegalStateException("Application is configured for '" + messagingFormat + "' messaging, Avro publishing is disabled.");
+        }
+        Objects.requireNonNull(topic, "topic must not be null");
+        Objects.requireNonNull(schemaFile, "schemaFile must not be null");
+        Objects.requireNonNull(payload, "payload must not be null");
+
+        Schema schema = schemaFile.startsWith("avro/") ? schemas.schema(schemaFile) : schemas.schemaByName(schemaFile);
+        validateRequiredFields(schema, payload);
+        GenericRecord record = buildRecord(schema, payload);
+
+        String finalKey = (key == null || key.isBlank()) ? ("auto-" + UUID.randomUUID()) : key;
+        ProducerRecord<String, Object> producerRecord = new ProducerRecord<>(topic, finalKey, record);
+        CompletableFuture<RecordMetadata> promise = new CompletableFuture<>();
+        kafkaProducer.send(producerRecord, (metadata, exception) -> {
+            if (exception != null) {
+                log.error("Failed to send Avro to topic {} using schema {}: {}", topic, schema.getFullName(), exception.getMessage(), exception);
+                promise.completeExceptionally(exception);
+            } else {
+                log.info("Sent Avro {} to {}-{}@offset {} with key={}", schema.getName(), metadata.topic(), metadata.partition(), metadata.offset(), finalKey);
+                promise.complete(metadata);
+            }
+        });
+        return promise;
+    }
+
+    public CompletableFuture<RecordMetadata> sendString(String topic, String key, String value) {
+        if (isAvro()) {
+            throw new IllegalStateException("Application is configured for '" + messagingFormat + "' messaging, String publishing is disabled.");
+        }
+        Objects.requireNonNull(topic, "topic must not be null");
+        Objects.requireNonNull(value, "value must not be null");
+        String finalKey = (key == null || key.isBlank()) ? ("auto-" + UUID.randomUUID()) : key;
+        ProducerRecord<String, Object> producerRecord = new ProducerRecord<>(topic, finalKey, value);
+        CompletableFuture<RecordMetadata> promise = new CompletableFuture<>();
+        kafkaProducer.send(producerRecord, (metadata, exception) -> {
+            if (exception != null) {
+                log.error("Failed to send String to topic {}: {}", topic, exception.getMessage(), exception);
+                promise.completeExceptionally(exception);
+            } else {
+                log.info("Sent String message to {}-{}@offset {} with key={}", metadata.topic(), metadata.partition(), metadata.offset(), finalKey);
+                promise.complete(metadata);
+            }
+        });
+        return promise;
+    }
+
+    private static GenericRecord buildRecord(Schema schema, Map<String, Object> payload) {
+        GenericRecord record = new GenericData.Record(schema);
+        for (Schema.Field field : schema.getFields()) {
+            Object value = payload.get(field.name());
+            record.put(field.name(), value);
+        }
+        return record;
+    }
+
+    private static void validateRequiredFields(Schema schema, Map<String, Object> payload) {
+        Set<String> missing = new HashSet<>();
+        for (Schema.Field field : schema.getFields()) {
+            boolean hasDefault = field.hasDefaultValue();
+            boolean nullable = isNullable(field.schema());
+            if (!hasDefault && !nullable) {
+                if (!payload.containsKey(field.name()) || payload.get(field.name()) == null) {
+                    missing.add(field.name());
+                }
+            }
+        }
+        if (!missing.isEmpty()) {
+            throw new IllegalArgumentException("Missing required fields for schema '" + schema.getFullName() + "': " + missing);
+        }
+    }
+
+    private static boolean isNullable(Schema fieldSchema) {
+        if (fieldSchema.getType() == Schema.Type.NULL) return true;
+        if (fieldSchema.getType() == Schema.Type.UNION) {
+            for (Schema s : fieldSchema.getTypes()) {
+                if (s.getType() == Schema.Type.NULL) return true;
+            }
+        }
+        return false;
     }
 }
