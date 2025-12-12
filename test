@@ -1,89 +1,76 @@
-public void listen(List<ConsumerRecord<String, String>> records) {
+{
+  "type": "record",
+  "name": "NuvonoPaymentData",
+  "namespace": "com.yourcompany.payments.model",
+  "fields": [
+    { "name": "discriminator", "type": ["null", "string"], "default": null },
+    { "name": "uetr", "type": ["null", "string"], "default": null },
+    { "name": "paymentId", "type": ["null", "string"], "default": null },
+    { "name": "paymentRequestId", "type": ["null", "string"], "default": null },
+    { "name": "prtryInitiationSource", "type": ["null", "string"], "default": null },
+    { "name": "senderType", "type": ["null", "string"], "default": null },
+    { "name": "prtryBulkId", "type": ["null", "string"], "default": null },
+    { "name": "cif", "type": ["null", "string"], "default": null },
 
-    long startTime = System.currentTimeMillis();
-    int totalRecordSize = 0;
-    int totalProcessedCount = 0;
+    { "name": "recipientAccountNumber", "type": ["null", "string"], "default": null },
+    { "name": "recipientToken", "type": ["null", "string"], "default": null },
+    { "name": "recipientFirstName", "type": ["null", "string"], "default": null },
+    { "name": "recipientBusinessName", "type": ["null", "string"], "default": null },
+    { "name": "recipientLastName", "type": ["null", "string"], "default": null },
+    { "name": "recipientFi", "type": ["null", "string"], "default": null },
+    { "name": "recipientPaymentProfileId", "type": ["null", "string"], "default": null },
+    { "name": "recipientId", "type": ["null", "string"], "default": null },
 
-    if (records == null || records.isEmpty()) {
-        CPSLogger.warn(
-            log,
-            CPS_KAFKA_CONSUMER_APP_EVENT,
-            "Received empty batch from CPS Kafka publisher"
-        );
-        return;
-    }
+    { "name": "senderAccountNumber", "type": ["null", "string"], "default": null },
+    { "name": "senderToken", "type": ["null", "string"], "default": null },
+    { "name": "senderAccountType", "type": ["null", "string"], "default": null },
+    { "name": "senderName", "type": ["null", "string"], "default": null },
+    { "name": "senderFirstName", "type": ["null", "string"], "default": null },
+    { "name": "senderLastName", "type": ["null", "string"], "default": null },
+    { "name": "senderAba", "type": ["null", "string"], "default": null },
 
-    CPSLogger.info(
-        log,
-        CPS_KAFKA_CONSUMER_APP_EVENT,
-        CPSLogger.fillPlaceHolders(
-            "Received batch with {} Kafka records",
-            records.size()
-        )
-    );
+    { "name": "memo", "type": ["null", "string"], "default": null },
+    { "name": "mop", "type": ["null", "string"], "default": null },
+    { "name": "currency", "type": ["null", "string"], "default": null },
 
-    for (ConsumerRecord<String, String> msg : records) {
+    { "name": "senderPaymentProfileId", "type": ["null", "string"], "default": null },
+    { "name": "senderId", "type": ["null", "string"], "default": null },
 
-        if (msg == null || msg.value() == null) {
-            CPSLogger.warn(
-                log,
-                CPS_KAFKA_CONSUMER_APP_EVENT,
-                "Skipping null/empty Kafka record"
-            );
-            continue;
+    {
+      "name": "senderAddress",
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "Address",
+          "fields": [
+            { "name": "line1", "type": ["null", "string"], "default": null },
+            { "name": "line2", "type": ["null", "string"], "default": null },
+            { "name": "city", "type": ["null", "string"], "default": null },
+            { "name": "state", "type": ["null", "string"], "default": null },
+            { "name": "zip", "type": ["null", "string"], "default": null },
+            { "name": "country", "type": ["null", "string"], "default": null }
+          ]
         }
+      ],
+      "default": null
+    },
 
-        String messageKey = msg.key();
+    { "name": "recipientOrganizationId", "type": ["null", "string"], "default": null },
+    { "name": "senderOrganizationId", "type": ["null", "string"], "default": null },
 
-        try {
-            List<CpsPaymentData> cpsPaymentSchemaList =
-                    objectMapper.readValue(
-                        msg.value(),
-                        new TypeReference<List<CpsPaymentData>>() {}
-                    );
-
-            int recordSize = cpsPaymentSchemaList.size();
-            totalRecordSize += recordSize;
-
-            CPSLogger.debug(
-                log,
-                CPS_KAFKA_CONSUMER_APP_EVENT,
-                CPSLogger.fillPlaceHolders(
-                    "Received {} records for message key: {}",
-                    recordSize,
-                    messageKey
-                )
-            );
-
-            for (CpsPaymentData cpsPaymentData : cpsPaymentSchemaList) {
-                cpsTransactionMessageProcessor.process(cpsPaymentData);
-                totalProcessedCount++;
-            }
-
-        } catch (Exception e) {
-            CPSLogger.error(
-                log,
-                CPS_KAFKA_CONSUMER_APP_EVENT,
-                CPSLogger.fillPlaceHolders(
-                    "Failed to process messages for key: {}",
-                    messageKey
-                ),
-                e
-            );
-            // TODO: discuss failure handling (DLQ / retry / seek)
+    {
+      "name": "udfMap",
+      "type": [
+        "null",
+        {
+          "type": "map",
+          "values": ["null", "string", "int", "long", "double", "boolean"]
         }
-    }
+      ],
+      "default": null
+    },
 
-    long elapsedTime = System.currentTimeMillis() - startTime;
-
-    CPSLogger.info(
-        log,
-        CPS_KAFKA_CONSUMER_APP_EVENT,
-        CPSLogger.fillPlaceHolders(
-            "Successfully processed {} records out of {} in {} ms",
-            totalProcessedCount,
-            totalRecordSize,
-            elapsedTime
-        )
-    );
+    { "name": "amount", "type": ["null", "string"], "default": null }
+  ]
 }
