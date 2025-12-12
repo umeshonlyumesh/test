@@ -1,106 +1,27 @@
-{
-  "type": "record",
-  "name": "NuvonoPaymentData",
-  "namespace": "com.nuvono.payments.avro",
-  "fields": [
+private void sendToDlq(
+        String originalTopic,
+        String key,
+        ProducerRecord<String, Object> originalRecord,
+        Exception cause,
+        CompletableFuture<RecordMetadata> fut
+) {
+    String dlqTopic = dlqTopic(originalTopic);
+    ensureTopic(dlqTopic);
 
-    { "name": "discriminator", "type": ["null", "string"], "default": null },
-    { "name": "uetr", "type": ["null", "string"], "default": null },
-    { "name": "paymentId", "type": ["null", "string"], "default": null },
-    { "name": "paymentRequestId", "type": ["null", "string"], "default": null },
-    { "name": "prtryInitiationSource", "type": ["null", "string"], "default": null },
-    { "name": "senderType", "type": ["null", "string"], "default": null },
-    { "name": "prtryBulkId", "type": ["null", "string"], "default": null },
-    { "name": "cif", "type": ["null", "string"], "default": null },
+    ProducerRecord<String, Object> dlqRecord =
+            new ProducerRecord<>(dlqTopic, key, originalRecord.value());
 
-    { "name": "recipientAccountNumber", "type": ["null", "string"], "default": null },
-    { "name": "recipientToken", "type": ["null", "string"], "default": null },
-    { "name": "recipientFirstName", "type": ["null", "string"], "default": null },
-    { "name": "recipientBusinessName", "type": ["null", "string"], "default": null },
-    { "name": "recipientLastName", "type": ["null", "string"], "default": null },
-    { "name": "recipientFi", "type": ["null", "string"], "default": null },
-    { "name": "recipientPaymentProfileId", "type": ["null", "string"], "default": null },
-    { "name": "recipientId", "type": ["null", "string"], "default": null },
+    // OPTIONAL: Add headers for debugging
+    dlqRecord.headers()
+            .add("dlq-original-topic", originalTopic.getBytes())
+            .add("dlq-exception", cause.getClass().getName().getBytes())
+            .add("dlq-message", String.valueOf(cause.getMessage()).getBytes());
 
-    { "name": "senderAccountNumber", "type": ["null", "string"], "default": null },
-    { "name": "senderToken", "type": ["null", "string"], "default": null },
-    { "name": "senderAccountType", "type": ["null", "string"], "default": null },
-    { "name": "senderName", "type": ["null", "string"], "default": null },
-    { "name": "senderFirstName", "type": ["null", "string"], "default": null },
-    { "name": "senderLastName", "type": ["null", "string"], "default": null },
-    { "name": "senderAba", "type": ["null", "string"], "default": null },
-
-    { "name": "memo", "type": ["null", "string"], "default": null },
-    { "name": "mop", "type": ["null", "string"], "default": null },
-    { "name": "currency", "type": ["null", "string"], "default": null },
-
-    { "name": "senderPaymentProfileId", "type": ["null", "string"], "default": null },
-    { "name": "senderId", "type": ["null", "string"], "default": null },
-
-    {
-      "name": "senderAddress",
-      "type": [
-        "null",
-        {
-          "type": "record",
-          "name": "Address",
-          "fields": [
-            { "name": "line1", "type": ["null", "string"], "default": null },
-            { "name": "line2", "type": ["null", "string"], "default": null },
-            { "name": "city", "type": ["null", "string"], "default": null },
-            { "name": "state", "type": ["null", "string"], "default": null },
-            { "name": "zip", "type": ["null", "string"], "default": null },
-            { "name": "country", "type": ["null", "string"], "default": null }
-          ]
+    getProducer().send(dlqRecord, (md, dlqEx) -> {
+        if (dlqEx != null) {
+            fut.completeExceptionally(dlqEx);
+        } else {
+            fut.complete(md);
         }
-      ],
-      "default": null
-    },
-
-    { "name": "recipientOrganizationId", "type": ["null", "string"], "default": null },
-    { "name": "senderOrganizationId", "type": ["null", "string"], "default": null },
-
-    {
-      "name": "udfMap",
-      "type": [
-        "null",
-        {
-          "type": "map",
-          "values": ["null", "string", "int", "long", "double", "boolean"]
-        }
-      ],
-      "default": null
-    },
-
-    { "name": "amount", "type": ["null", "string"], "default": null },
-    { "name": "initiationTime", "type": ["null", "string"], "default": null },
-    { "name": "businessDate", "type": ["null", "string"], "default": null },
-
-    { "name": "prtryMsgSts", "type": ["null", "string"], "default": null },
-    { "name": "prtryZelleRejectReasonCode", "type": ["null", "string"], "default": null },
-    { "name": "prtryLastUpdatedDtTm", "type": ["null", "string"], "default": null },
-
-    { "name": "locatedByQrCode", "type": ["null", "string"], "default": null },
-    { "name": "prtryDuplicatedOverride", "type": ["null", "string"], "default": null },
-    { "name": "productType", "type": ["null", "string"], "default": null },
-    { "name": "tpsName", "type": ["null", "string"], "default": null },
-    { "name": "prtryBranchId", "type": ["null", "string"], "default": null },
-    { "name": "prtryPmtInfPmtInfId", "type": ["null", "string"], "default": null },
-
-    { "name": "actionId", "type": ["null", "string"], "default": null },
-    { "name": "systemId", "type": ["null", "string"], "default": null },
-    { "name": "comment", "type": ["null", "string"], "default": null },
-
-    { "name": "automaticRetryOnTimeout", "type": ["null", "string"], "default": null },
-    { "name": "automaticRetryOnUnavailability", "type": ["null", "string"], "default": null },
-
-    { "name": "sendOutExistingMsg", "type": ["null", "string"], "default": null },
-    { "name": "processExistingMsg", "type": ["null", "string"], "default": null },
-    { "name": "dontPersistIfFailedValidation", "type": ["null", "string"], "default": null },
-    { "name": "simulateTheAction", "type": ["null", "string"], "default": null },
-    { "name": "persist", "type": ["null", "string"], "default": null },
-
-    { "name": "correlationId", "type": ["null", "string"], "default": null },
-    { "name": "version", "type": ["null", "int"], "default": null }
-  ]
+    });
 }
