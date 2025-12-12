@@ -1,8 +1,9 @@
 {
   "type": "record",
   "name": "NuvonoPaymentData",
-  "namespace": "com.yourcompany.payments.model",
+  "namespace": "com.nuvono.payments.avro",
   "fields": [
+
     { "name": "discriminator", "type": ["null", "string"], "default": null },
     { "name": "uetr", "type": ["null", "string"], "default": null },
     { "name": "paymentId", "type": ["null", "string"], "default": null },
@@ -71,6 +72,35 @@
       "default": null
     },
 
-    { "name": "amount", "type": ["null", "string"], "default": null }
+    { "name": "amount", "type": ["null", "string"], "default": null },
+    { "name": "initiationTime", "type": ["null", "string"], "default": null },
+    { "name": "businessDate", "type": ["null", "string"], "default": null },
+
+    { "name": "prtryMsgSts", "type": ["null", "string"], "default": null },
+    { "name": "prtryZelleRejectReasonCode", "type": ["null", "string"], "default": null },
+    { "name": "prtryLastUpdatedDtTm", "type": ["null", "string"], "default": null },
+
+    { "name": "locatedByQrCode", "type": ["null", "string"], "default": null },
+    { "name": "prtryDuplicatedOverride", "type": ["null", "string"], "default": null },
+    { "name": "productType", "type": ["null", "string"], "default": null },
+    { "name": "tpsName", "type": ["null", "string"], "default": null },
+    { "name": "prtryBranchId", "type": ["null", "string"], "default": null },
+    { "name": "prtryPmtInfPmtInfId", "type": ["null", "string"], "default": null },
+
+    { "name": "actionId", "type": ["null", "string"], "default": null },
+    { "name": "systemId", "type": ["null", "string"], "default": null },
+    { "name": "comment", "type": ["null", "string"], "default": null },
+
+    { "name": "automaticRetryOnTimeout", "type": ["null", "string"], "default": null },
+    { "name": "automaticRetryOnUnavailability", "type": ["null", "string"], "default": null },
+
+    { "name": "sendOutExistingMsg", "type": ["null", "string"], "default": null },
+    { "name": "processExistingMsg", "type": ["null", "string"], "default": null },
+    { "name": "dontPersistIfFailedValidation", "type": ["null", "string"], "default": null },
+    { "name": "simulateTheAction", "type": ["null", "string"], "default": null },
+    { "name": "persist", "type": ["null", "string"], "default": null },
+
+    { "name": "correlationId", "type": ["null", "string"], "default": null },
+    { "name": "version", "type": ["null", "int"], "default": null }
   ]
 }
