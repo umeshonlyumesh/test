@@ -1,49 +1,56 @@
+package com.truist.core.config;
+
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
+import jakarta.annotation.PostConstruct;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.stereotype.Component;
 
-import java.io.File;
+import java.io.InputStream;
 import java.util.Map;
-import java.util.stream.Collectors;
+import java.util.Optional;
 
-public class ReverseJsonGenerator {
+@Component
+public class CountryCodeLookup {
 
-    public static void main(String[] args) throws Exception {
+    private static final String FILE_PATH =
+            "config/country-codes-reversed.json";
 
-        ObjectMapper mapper = new ObjectMapper()
-                .enable(SerializationFeature.INDENT_OUTPUT);
+    private final ObjectMapper objectMapper;
+    private Map<String, String> alpha3ToAlpha2;
 
-        // 🔹 Input JSON file
-        File inputFile = new File("country-codes.json");
+    public CountryCodeLookup(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
 
-        // 🔹 Output JSON file
-        File outputFile = new File("country-codes-reversed.json");
+    @PostConstruct
+    void init() {
+        try (InputStream is =
+                     new ClassPathResource(FILE_PATH).getInputStream()) {
 
-        // 1️⃣ Read original JSON (ALPHA2 → ALPHA3)
-        Map<String, String> original =
-                mapper.readValue(
-                        inputFile,
-                        new TypeReference<Map<String, String>>() {}
-                );
+            this.alpha3ToAlpha2 = Map.copyOf(
+                    objectMapper.readValue(
+                            is,
+                            new TypeReference<Map<String, String>>() {}
+                    )
+            );
 
-        // 2️⃣ Reverse map (ALPHA3 → ALPHA2)
-        Map<String, String> reversed =
-                original.entrySet()
-                        .stream()
-                        .collect(Collectors.toMap(
-                                Map.Entry::getValue, // value becomes key
-                                Map.Entry::getKey,   // key becomes value
-                                (v1, v2) -> {
-                                    throw new IllegalStateException(
-                                            "Duplicate value found while reversing JSON: " + v1
-                                    );
-                                }
-                        ));
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                    "Failed to load country-codes-reversed.json", e);
+        }
+    }
 
-        // 3️⃣ Write reversed JSON to file
-        mapper.writeValue(outputFile, reversed);
+    /** Example: NZL → NZ */
+    public Optional<String> toAlpha2(String alpha3) {
+        return Optional.ofNullable(alpha3ToAlpha2.get(alpha3));
+    }
 
-        System.out.println("✅ Reversed JSON generated: "
-                + outputFile.getAbsolutePath());
+    public boolean isValidAlpha3(String alpha3) {
+        return alpha3ToAlpha2.containsKey(alpha3);
+    }
+
+    public Map<String, String> getAll() {
+        return alpha3ToAlpha2;
     }
 }
