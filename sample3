@@ -8,53 +8,49 @@
   "channelId": "OLBWEB",
   "channelSubId": "RET",
   "entity": 1,
-  "parentReference": null,
 
   "transactionType": "CT",
   "transactionCategory": "TRANSFER",
 
   "initiatorCif": "009898121290012",
   "initiatorName": "Jim K",
-  "initiatorAlternativeName": null,
 
   "initiatorAddress": {
     "addressType": "HOME",
-    "address1": "123 Main St",
-    "address2": null,
-    "street": "Main Street",
-    "buildingNumber": "10A",
-    "postalCode": "30001",
-    "townName": "Atlanta",
-    "state": "GA",
+    "address1": "",
+    "address2": "",
+    "street": "",
+    "buildingNumber": "",
+    "postalCode": "",
+    "townName": "",
+    "state": "",
     "country": "US",
-    "prefix": "+1",
-    "phoneNumber": "4045551234",
-    "mobileNumber": "4045555678",
-    "faxNumber": null
+    "prefix": "",
+    "phoneNumber": "",
+    "mobileNumber": "",
+    "faxNumber": ""
   },
 
   "creditorAccountNumber": "13670765906511371",
   "creditorAccountType": "DDA",
   "creditorAccountName": "Personal Account",
-  "creditorLastName": null,
-  "creditorAccountRoutingCode": null,
   "creditorMop": "BOOK",
   "creditorCurrency": "USD",
 
   "creditorAddress": {
     "addressType": "HOME",
-    "address1": "123 Main St",
-    "address2": null,
-    "street": "Main Street",
-    "buildingNumber": "10A",
-    "postalCode": "30001",
-    "townName": "Atlanta",
-    "state": "GA",
+    "address1": "",
+    "address2": "",
+    "street": "",
+    "buildingNumber": "",
+    "postalCode": "",
+    "townName": "",
+    "state": "",
     "country": "US",
-    "prefix": "+1",
-    "phoneNumber": "4045551234",
-    "mobileNumber": "4045555678",
-    "faxNumber": null
+    "prefix": "",
+    "phoneNumber": "",
+    "mobileNumber": "",
+    "faxNumber": ""
   },
 
   "creditorAccountNumberSearch": "1988815783022",
@@ -62,29 +58,27 @@
   "debtorAccountNumber": "40419463",
   "debtorAccountType": "INV",
   "debtorAccountName": "Personal Account",
-  "debtorLastName": null,
-  "debtorAccountRoutingCode": null,
   "debtorMop": "BOOK",
   "debtorCurrency": "USD",
 
   "debtorAddress": {
     "addressType": "HOME",
-    "address1": "456 Market St",
-    "address2": null,
-    "street": "Market Street",
-    "buildingNumber": "22B",
-    "postalCode": "30303",
-    "townName": "Atlanta",
-    "state": "GA",
+    "address1": "",
+    "address2": "",
+    "street": "",
+    "buildingNumber": "",
+    "postalCode": "",
+    "townName": "",
+    "state": "",
     "country": "US",
-    "prefix": "+1",
-    "phoneNumber": "4045559999",
-    "mobileNumber": "4045558888",
-    "faxNumber": null
+    "prefix": "",
+    "phoneNumber": "",
+    "mobileNumber": "",
+    "faxNumber": ""
   },
 
   "frequencyType": "2",
-  "amount": 0.00,
+  "amount": 0.0,
   "insAmount": 5.57,
 
   "executionDate": "2023-12-05",
@@ -115,6 +109,5 @@
   "updatedTimestamp": "2023-12-05 07:37:53.076535",
   "createdBy": "G19624",
   "updatedBy": "G19624",
-
-  "addenda": null
+  "addenda": ""
 }
