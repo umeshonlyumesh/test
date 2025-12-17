@@ -1,156 +1,35 @@
-<h2>By Type</h2>
-<apx-chart *ngIf="chartOptionsByType"
-           [series]="chartOptionsByType.series"
-           [chart]="chartOptionsByType.chart"
-           [xaxis]="chartOptionsByType.xaxis"
-           [dataLabels]="chartOptionsByType.dataLabels"
-           [stroke]="chartOptionsByType.stroke"
-           [title]="chartOptionsByType.title"
-           [legend]="chartOptionsByType.legend">
-</apx-chart>
+TopicPartition tp = new TopicPartition(topic, partition);
+        try (KafkaConsumer<String, Object> consumer = new KafkaConsumer<>(cfg, keyDes, valueDes)) {
+            consumer.assign(Collections.singletonList(tp));
 
-<h2>By Entity Type</h2>
-<apx-chart *ngIf="chartOptionsByEntityType"
-           [series]="chartOptionsByEntityType.series"
-           [chart]="chartOptionsByEntityType.chart"
-           [xaxis]="chartOptionsByEntityType.xaxis"
-           [dataLabels]="chartOptionsByEntityType.dataLabels"
-           [stroke]="chartOptionsByEntityType.stroke"
-           [title]="chartOptionsByEntityType.title"
-           [legend]="chartOptionsByEntityType.legend">
-</apx-chart>
+            // Validate offset range
+            Long beginning = consumer.beginningOffsets(Collections.singleton(tp)).get(tp);
+            Long end = consumer.endOffsets(Collections.singleton(tp)).get(tp);
+            if (beginning != null && end != null) {
+                if (offset < beginning || offset >= end) {
+                    log.warn("Requested offset {} out of range [{}, {}) for {}-{}", offset, beginning, end, topic, partition);
+                    return null;
+                }
+            }
 
-<h2>By Current State</h2>
-<apx-chart *ngIf="chartOptionsByCurrentState"
-           [series]="chartOptionsByCurrentState.series"
-           [chart]="chartOptionsByCurrentState.chart"
-           [xaxis]="chartOptionsByCurrentState.xaxis"
-           [dataLabels]="chartOptionsByCurrentState.dataLabels"
-           [stroke]="chartOptionsByCurrentState.stroke"
-           [title]="chartOptionsByCurrentState.title"
-           [legend]="chartOptionsByCurrentState.legend">
-</apx-chart>
+            consumer.seek(tp, offset);
 
-
-  //////////////////////////////
-
-  import { Component, OnInit } from '@angular/core';
-import {
-  ApexAxisChartSeries,
-  ApexChart,
-  ApexXAxis,
-  ApexDataLabels,
-  ApexStroke,
-  ApexTitleSubtitle,
-  ApexLegend
-} from 'ng-apexcharts';
-import * as rawData from '../../assets/simulated_event_records.json';
-
-export type ChartOptions = {
-  series: ApexAxisChartSeries;
-  chart: ApexChart;
-  xaxis: ApexXAxis;
-  dataLabels: ApexDataLabels;
-  stroke: ApexStroke;
-  title: ApexTitleSubtitle;
-  legend: ApexLegend;
-};
-
-@Component({
-  selector: 'app-event-chart',
-  templateUrl: './event-chart.component.html',
-  styleUrls: ['./event-chart.component.css']
-})
-export class EventChartComponent implements OnInit {
-  public chartOptionsByType: Partial<ChartOptions>;
-  public chartOptionsByEntityType: Partial<ChartOptions>;
-  public chartOptionsByCurrentState: Partial<ChartOptions>;
-
-  constructor() {}
-
-  ngOnInit(): void {
-    const raw = (rawData as any).default;
-
-    this.chartOptionsByType = this.buildChart(this.processData(raw, 'type'), 'Event Counts by Type');
-    this.chartOptionsByEntityType = this.buildChart(this.processData(raw, 'entityType'), 'Event Counts by Entity Type');
-    this.chartOptionsByCurrentState = this.buildChart(this.processData(raw, 'currentState'), 'Event Counts by Current State');
-  }
-
-  processData(data: any[], groupBy: 'type' | 'entityType' | 'currentState'): { time: string; counts: { [key: string]: number } }[] {
-    const grouped: Map<string, { [key: string]: number }> = new Map();
-    const intervalMinutes = 10;
-    const intervalMs = intervalMinutes * 60 * 1000;
-
-    for (const event of data) {
-      const timestamp = new Date(event.event_time).getTime();
-      const roundedTimestamp = Math.floor(timestamp / intervalMs) * intervalMs;
-      const roundedDate = new Date(roundedTimestamp);
-      const timeKey = `${roundedDate.getFullYear()}-${String(roundedDate.getMonth() + 1).padStart(2, '0')}-${String(roundedDate.getDate()).padStart(2, '0')} ${String(roundedDate.getHours()).padStart(2, '0')}:${String(roundedDate.getMinutes()).padStart(2, '0')}`;
-
-      const key = event.meta_data?.[groupBy] ?? 'UNKNOWN';
-
-      if (!grouped.has(timeKey)) {
-        grouped.set(timeKey, {});
-      }
-
-      const counts = grouped.get(timeKey)!;
-      counts[key] = (counts[key] || 0) + 1;
-    }
-
-    return Array.from(grouped.entries())
-      .map(([time, counts]) => ({ time, counts }))
-      .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
-  }
-
-  buildChart(grouped: { time: string; counts: { [key: string]: number } }[], title: string): Partial<ChartOptions> {
-    const categories = grouped.map(item => item.time);
-    const keys = Array.from(new Set(grouped.flatMap(item => Object.keys(item.counts))));
-
-    const series = keys.map(key => ({
-      name: key,
-      data: categories.map(time => grouped.find(g => g.time === time)?.counts[key] || 0)
-    }));
-
-    return {
-      series,
-      chart: {
-        height: 400,
-        type: 'line',
-        zoom: {
-          enabled: true,
-          type: 'x',
-          autoScaleYaxis: true
-        },
-        toolbar: {
-          show: true,
-          autoSelected: 'zoom',
-          tools: {
-            download: true,
-            selection: true,
-            zoom: true,
-            zoomin: true,
-            zoomout: true,
-            pan: true,
-            reset: true
-          }
+            long deadline = System.currentTimeMillis() + Math.max(0, timeoutMs);
+            while (System.currentTimeMillis() < deadline) {
+                long remaining = Math.max(1, deadline - System.currentTimeMillis());
+                ConsumerRecords<String, Object> records = consumer.poll(Duration.ofMillis(Math.min(500, remaining)));
+                for (ConsumerRecord<String, Object> rec : records.records(tp)) {
+                    if (rec.offset() == offset) {
+                        return rec;
+                    } else if (rec.offset() > offset) {
+                        // We passed the desired offset without seeing it
+                        return null;
+                    }
+                }
+            }
+            return null;
+        } catch (Exception e) {
+            log.error("Failed to read single message from {}-{}@{}", topic, partition, offset, e);
+            return null;
         }
-      },
-      dataLabels: {
-        enabled: false
-      },
-      stroke: {
-        curve: 'smooth'
-      },
-      title: {
-        text: title,
-        align: 'left'
-      },
-      xaxis: {
-        categories
-      },
-      legend: {
-        position: 'top'
-      }
-    };
-  }
-}
+    }
