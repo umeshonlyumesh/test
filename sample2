@@ -4,120 +4,146 @@
   "namespace": "com.bank.payment.avro",
   "fields": [
 
-    { "name": "endToEndId", "type": ["null", "string"], "default": null },
-    { "name": "transactionId", "type": ["null", "string"], "default": null },
-    { "name": "version", "type": ["null", "int"], "default": null },
-    { "name": "instructionId", "type": ["null", "string"], "default": null },
-    { "name": "uid", "type": ["null", "string"], "default": null },
-    { "name": "lob", "type": ["null", "string"], "default": null },
-    { "name": "channelId", "type": ["null", "string"], "default": null },
-    { "name": "channelSubId", "type": ["null", "string"], "default": null },
-    { "name": "entity", "type": ["null", "int"], "default": null },
-    { "name": "parentReference", "type": ["null", "string"], "default": null },
+    { "name": "endToEndId", "type": "string" },
+    { "name": "transactionId", "type": "string" },
+    { "name": "version", "type": "int" },
+    { "name": "instructionId", "type": "string" },
+    { "name": "uid", "type": "string" },
+    { "name": "lob", "type": "string" },
+    { "name": "channelId", "type": "string" },
+    { "name": "channelSubId", "type": "string" },
+    { "name": "entity", "type": "int" },
 
-    { "name": "transactionType", "type": ["null", "string"], "default": null },
-    { "name": "transactionCategory", "type": ["null", "string"], "default": null },
+    { "name": "transactionType", "type": "string" },
+    { "name": "transactionCategory", "type": "string" },
 
-    { "name": "initiatorCif", "type": ["null", "string"], "default": null },
-    { "name": "initiatorName", "type": ["null", "string"], "default": null },
-    { "name": "initiatorAlternativeName", "type": ["null", "string"], "default": null },
+    { "name": "initiatorCif", "type": "string" },
+    { "name": "initiatorName", "type": "string" },
 
     {
       "name": "initiatorAddress",
-      "type": ["null", {
+      "type": {
         "type": "record",
-        "name": "Address",
+        "name": "InitiatorAddress",
         "fields": [
-          { "name": "addressType", "type": ["null", "string"], "default": null },
-          { "name": "address1", "type": ["null", "string"], "default": null },
-          { "name": "address2", "type": ["null", "string"], "default": null },
-          { "name": "street", "type": ["null", "string"], "default": null },
-          { "name": "buildingNumber", "type": ["null", "string"], "default": null },
-          { "name": "postalCode", "type": ["null", "string"], "default": null },
-          { "name": "townName", "type": ["null", "string"], "default": null },
-          { "name": "state", "type": ["null", "string"], "default": null },
-          { "name": "country", "type": ["null", "string"], "default": null },
-          { "name": "prefix", "type": ["null", "string"], "default": null },
-          { "name": "phoneNumber", "type": ["null", "string"], "default": null },
-          { "name": "mobileNumber", "type": ["null", "string"], "default": null },
-          { "name": "faxNumber", "type": ["null", "string"], "default": null }
+          { "name": "addressType", "type": "string" },
+          { "name": "address1", "type": "string" },
+          { "name": "address2", "type": "string" },
+          { "name": "street", "type": "string" },
+          { "name": "buildingNumber", "type": "string" },
+          { "name": "postalCode", "type": "string" },
+          { "name": "townName", "type": "string" },
+          { "name": "state", "type": "string" },
+          { "name": "country", "type": "string" },
+          { "name": "prefix", "type": "string" },
+          { "name": "phoneNumber", "type": "string" },
+          { "name": "mobileNumber", "type": "string" },
+          { "name": "faxNumber", "type": "string" }
         ]
-      }],
-      "default": null
+      }
     },
 
-    { "name": "creditorAccountNumber", "type": ["null", "string"], "default": null },
-    { "name": "creditorAccountType", "type": ["null", "string"], "default": null },
-    { "name": "creditorAccountName", "type": ["null", "string"], "default": null },
-    { "name": "creditorLastName", "type": ["null", "string"], "default": null },
-    { "name": "creditorAccountRoutingCode", "type": ["null", "string"], "default": null },
-    { "name": "creditorMop", "type": ["null", "string"], "default": null },
-    { "name": "creditorCurrency", "type": ["null", "string"], "default": null },
+    { "name": "creditorAccountNumber", "type": "string" },
+    { "name": "creditorAccountType", "type": "string" },
+    { "name": "creditorAccountName", "type": "string" },
+    { "name": "creditorMop", "type": "string" },
+    { "name": "creditorCurrency", "type": "string" },
 
     {
       "name": "creditorAddress",
-      "type": ["null", "Address"],
-      "default": null
+      "type": {
+        "type": "record",
+        "name": "CreditorAddress",
+        "fields": [
+          { "name": "addressType", "type": "string" },
+          { "name": "address1", "type": "string" },
+          { "name": "address2", "type": "string" },
+          { "name": "street", "type": "string" },
+          { "name": "buildingNumber", "type": "string" },
+          { "name": "postalCode", "type": "string" },
+          { "name": "townName", "type": "string" },
+          { "name": "state", "type": "string" },
+          { "name": "country", "type": "string" },
+          { "name": "prefix", "type": "string" },
+          { "name": "phoneNumber", "type": "string" },
+          { "name": "mobileNumber", "type": "string" },
+          { "name": "faxNumber", "type": "string" }
+        ]
+      }
     },
 
-    { "name": "creditorAccountNumberSearch", "type": ["null", "string"], "default": null },
+    { "name": "creditorAccountNumberSearch", "type": "string" },
 
-    { "name": "debtorAccountNumber", "type": ["null", "string"], "default": null },
-    { "name": "debtorAccountType", "type": ["null", "string"], "default": null },
-    { "name": "debtorAccountName", "type": ["null", "string"], "default": null },
-    { "name": "debtorLastName", "type": ["null", "string"], "default": null },
-    { "name": "debtorAccountRoutingCode", "type": ["null", "string"], "default": null },
-    { "name": "debtorMop", "type": ["null", "string"], "default": null },
-    { "name": "debtorCurrency", "type": ["null", "string"], "default": null },
+    { "name": "debtorAccountNumber", "type": "string" },
+    { "name": "debtorAccountType", "type": "string" },
+    { "name": "debtorAccountName", "type": "string" },
+    { "name": "debtorMop", "type": "string" },
+    { "name": "debtorCurrency", "type": "string" },
 
     {
       "name": "debtorAddress",
-      "type": ["null", "Address"],
-      "default": null
+      "type": {
+        "type": "record",
+        "name": "DebtorAddress",
+        "fields": [
+          { "name": "addressType", "type": "string" },
+          { "name": "address1", "type": "string" },
+          { "name": "address2", "type": "string" },
+          { "name": "street", "type": "string" },
+          { "name": "buildingNumber", "type": "string" },
+          { "name": "postalCode", "type": "string" },
+          { "name": "townName", "type": "string" },
+          { "name": "state", "type": "string" },
+          { "name": "country", "type": "string" },
+          { "name": "prefix", "type": "string" },
+          { "name": "phoneNumber", "type": "string" },
+          { "name": "mobileNumber", "type": "string" },
+          { "name": "faxNumber", "type": "string" }
+        ]
+      }
     },
 
-    { "name": "frequencyType", "type": ["null", "string"], "default": null },
-    { "name": "amount", "type": ["null", "double"], "default": null },
-    { "name": "insAmount", "type": ["null", "double"], "default": null },
+    { "name": "frequencyType", "type": "string" },
+    { "name": "amount", "type": "double" },
+    { "name": "insAmount", "type": "double" },
 
-    { "name": "executionDate", "type": ["null", "string"], "default": null },
-    { "name": "settlementDate", "type": ["null", "string"], "default": null },
+    { "name": "executionDate", "type": "string" },
+    { "name": "settlementDate", "type": "string" },
 
-    { "name": "purpose", "type": ["null", "string"], "default": null },
-    { "name": "paymentType", "type": ["null", "string"], "default": null },
-    { "name": "amountType", "type": ["null", "string"], "default": null },
+    { "name": "purpose", "type": "string" },
+    { "name": "paymentType", "type": "string" },
+    { "name": "amountType", "type": "string" },
 
-    { "name": "status", "type": ["null", "string"], "default": null },
-    { "name": "state", "type": ["null", "string"], "default": null },
-    { "name": "businessStatus", "type": ["null", "string"], "default": null },
+    { "name": "status", "type": "string" },
+    { "name": "state", "type": "string" },
+    { "name": "businessStatus", "type": "string" },
 
-    { "name": "direction", "type": ["null", "string"], "default": null },
-    { "name": "unverifiedFundFlag", "type": ["null", "boolean"], "default": null },
+    { "name": "direction", "type": "string" },
+    { "name": "unverifiedFundFlag", "type": "boolean" },
 
     {
       "name": "transactionAmount",
-      "type": ["null", {
+      "type": {
         "type": "array",
         "items": {
           "type": "record",
           "name": "TransactionAmount",
           "fields": [
-            { "name": "code", "type": ["null", "string"], "default": null },
-            { "name": "value", "type": ["null", "string"], "default": null }
+            { "name": "code", "type": "string" },
+            { "name": "value", "type": "string" }
           ]
         }
-      }],
-      "default": null
+      }
     },
 
-    { "name": "rejectReasonCode", "type": ["null", "string"], "default": null },
-    { "name": "rejectReason", "type": ["null", "string"], "default": null },
+    { "name": "rejectReasonCode", "type": "string" },
+    { "name": "rejectReason", "type": "string" },
 
-    { "name": "createdTimestamp", "type": ["null", "string"], "default": null },
-    { "name": "updatedTimestamp", "type": ["null", "string"], "default": null },
-    { "name": "createdBy", "type": ["null", "string"], "default": null },
-    { "name": "updatedBy", "type": ["null", "string"], "default": null },
+    { "name": "createdTimestamp", "type": "string" },
+    { "name": "updatedTimestamp", "type": "string" },
+    { "name": "createdBy", "type": "string" },
+    { "name": "updatedBy", "type": "string" },
 
-    { "name": "addenda", "type": ["null", "string"], "default": null }
+    { "name": "addenda", "type": "string" }
   ]
 }
