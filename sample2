@@ -123,17 +123,21 @@
 
     {
       "name": "transactionAmount",
-      "type": {
-        "type": "array",
-        "items": {
-          "type": "record",
-          "name": "TransactionAmount",
-          "fields": [
-            { "name": "code", "type": "string" },
-            { "name": "value", "type": "string" }
-          ]
+      "type": [
+        "null",
+        {
+          "type": "array",
+          "items": {
+            "type": "record",
+            "name": "TransactionAmount",
+            "fields": [
+              { "name": "code", "type": "string" },
+              { "name": "value", "type": "string" }
+            ]
+          }
         }
-      }
+      ],
+      "default": null
     },
 
     { "name": "rejectReasonCode", "type": "string" },
