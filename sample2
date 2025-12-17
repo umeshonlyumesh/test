@@ -1,237 +1,123 @@
-// event-chart.component.ts
-import { Component, OnInit } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import {
-  ApexAxisChartSeries,
-  ApexChart,
-  ApexXAxis,
-  ApexYAxis,
-  ApexDataLabels,
-  ApexStroke,
-  ApexLegend,
-  ApexTitleSubtitle,
-  ApexTooltip,
-  ApexMarkers
-} from 'ng-apexcharts';
+{
+  "type": "record",
+  "name": "Transaction",
+  "namespace": "com.bank.payment.avro",
+  "fields": [
 
-export type ChartOptions = {
-  series: ApexAxisChartSeries;
-  chart: ApexChart;
-  xaxis: ApexXAxis;
-  yaxis: ApexYAxis;
-  dataLabels: ApexDataLabels;
-  stroke: ApexStroke;
-  legend: ApexLegend;
-  title: ApexTitleSubtitle;
-  tooltip: ApexTooltip;
-  colors: string[];
-  markers: ApexMarkers;
-};
+    { "name": "endToEndId", "type": ["null", "string"], "default": null },
+    { "name": "transactionId", "type": ["null", "string"], "default": null },
+    { "name": "version", "type": ["null", "int"], "default": null },
+    { "name": "instructionId", "type": ["null", "string"], "default": null },
+    { "name": "uid", "type": ["null", "string"], "default": null },
+    { "name": "lob", "type": ["null", "string"], "default": null },
+    { "name": "channelId", "type": ["null", "string"], "default": null },
+    { "name": "channelSubId", "type": ["null", "string"], "default": null },
+    { "name": "entity", "type": ["null", "int"], "default": null },
+    { "name": "parentReference", "type": ["null", "string"], "default": null },
 
-@Component({
-  selector: 'app-event-chart',
-  templateUrl: './event-chart.component.html',
-  styleUrls: ['./event-chart.component.css']
-})
-export class EventChartComponent implements OnInit {
-  public chartOptions: Partial<ChartOptions>;
-  public loading = true;
-  public error = false;
+    { "name": "transactionType", "type": ["null", "string"], "default": null },
+    { "name": "transactionCategory", "type": ["null", "string"], "default": null },
 
-  constructor(private http: HttpClient) {
-    this.initializeChartOptions();
-  }
+    { "name": "initiatorCif", "type": ["null", "string"], "default": null },
+    { "name": "initiatorName", "type": ["null", "string"], "default": null },
+    { "name": "initiatorAlternativeName", "type": ["null", "string"], "default": null },
 
-  ngOnInit() {
-    this.loadData();
-  }
+    {
+      "name": "initiatorAddress",
+      "type": ["null", {
+        "type": "record",
+        "name": "Address",
+        "fields": [
+          { "name": "addressType", "type": ["null", "string"], "default": null },
+          { "name": "address1", "type": ["null", "string"], "default": null },
+          { "name": "address2", "type": ["null", "string"], "default": null },
+          { "name": "street", "type": ["null", "string"], "default": null },
+          { "name": "buildingNumber", "type": ["null", "string"], "default": null },
+          { "name": "postalCode", "type": ["null", "string"], "default": null },
+          { "name": "townName", "type": ["null", "string"], "default": null },
+          { "name": "state", "type": ["null", "string"], "default": null },
+          { "name": "country", "type": ["null", "string"], "default": null },
+          { "name": "prefix", "type": ["null", "string"], "default": null },
+          { "name": "phoneNumber", "type": ["null", "string"], "default": null },
+          { "name": "mobileNumber", "type": ["null", "string"], "default": null },
+          { "name": "faxNumber", "type": ["null", "string"], "default": null }
+        ]
+      }],
+      "default": null
+    },
 
-  private initializeChartOptions() {
-    this.chartOptions = {
-      series: [],
-      chart: {
-        type: 'line',
-        height: 350,
-        zoom: { enabled: true },
-        toolbar: { show: true },
-        animations: { enabled: true }
-      },
-      dataLabels: { enabled: false },
-      stroke: { 
-        curve: 'smooth', 
-        width: 2,
-        dashArray: [0, 0, 0] // Different line styles if needed
-      },
-      colors: ['#008FFB', '#00E396', '#FEB019'],
-      markers: {
-        size: 4,
-        hover: { size: 6 }
-      },
-      title: {
-        text: 'Event Counts by 5-Minute Intervals',
-        align: 'left',
-        style: { 
-          fontSize: '16px', 
-          fontWeight: 'bold',
-          color: '#263238'
+    { "name": "creditorAccountNumber", "type": ["null", "string"], "default": null },
+    { "name": "creditorAccountType", "type": ["null", "string"], "default": null },
+    { "name": "creditorAccountName", "type": ["null", "string"], "default": null },
+    { "name": "creditorLastName", "type": ["null", "string"], "default": null },
+    { "name": "creditorAccountRoutingCode", "type": ["null", "string"], "default": null },
+    { "name": "creditorMop", "type": ["null", "string"], "default": null },
+    { "name": "creditorCurrency", "type": ["null", "string"], "default": null },
+
+    {
+      "name": "creditorAddress",
+      "type": ["null", "Address"],
+      "default": null
+    },
+
+    { "name": "creditorAccountNumberSearch", "type": ["null", "string"], "default": null },
+
+    { "name": "debtorAccountNumber", "type": ["null", "string"], "default": null },
+    { "name": "debtorAccountType", "type": ["null", "string"], "default": null },
+    { "name": "debtorAccountName", "type": ["null", "string"], "default": null },
+    { "name": "debtorLastName", "type": ["null", "string"], "default": null },
+    { "name": "debtorAccountRoutingCode", "type": ["null", "string"], "default": null },
+    { "name": "debtorMop", "type": ["null", "string"], "default": null },
+    { "name": "debtorCurrency", "type": ["null", "string"], "default": null },
+
+    {
+      "name": "debtorAddress",
+      "type": ["null", "Address"],
+      "default": null
+    },
+
+    { "name": "frequencyType", "type": ["null", "string"], "default": null },
+    { "name": "amount", "type": ["null", "double"], "default": null },
+    { "name": "insAmount", "type": ["null", "double"], "default": null },
+
+    { "name": "executionDate", "type": ["null", "string"], "default": null },
+    { "name": "settlementDate", "type": ["null", "string"], "default": null },
+
+    { "name": "purpose", "type": ["null", "string"], "default": null },
+    { "name": "paymentType", "type": ["null", "string"], "default": null },
+    { "name": "amountType", "type": ["null", "string"], "default": null },
+
+    { "name": "status", "type": ["null", "string"], "default": null },
+    { "name": "state", "type": ["null", "string"], "default": null },
+    { "name": "businessStatus", "type": ["null", "string"], "default": null },
+
+    { "name": "direction", "type": ["null", "string"], "default": null },
+    { "name": "unverifiedFundFlag", "type": ["null", "boolean"], "default": null },
+
+    {
+      "name": "transactionAmount",
+      "type": ["null", {
+        "type": "array",
+        "items": {
+          "type": "record",
+          "name": "TransactionAmount",
+          "fields": [
+            { "name": "code", "type": ["null", "string"], "default": null },
+            { "name": "value", "type": ["null", "string"], "default": null }
+          ]
         }
-      },
-      xaxis: {
-        type: 'datetime',
-        labels: { 
-          datetimeUTC: false, 
-          format: 'HH:mm',
-          style: {
-            colors: '#78909c'
-          }
-        },
-        axisBorder: {
-          show: true,
-          color: '#78909c'
-        },
-        axisTicks: {
-          show: true,
-          color: '#78909c'
-        },
-        tooltip: {
-          enabled: false
-        }
-      },
-      yaxis: {
-        title: { 
-          text: 'Event Count',
-          style: {
-            color: '#78909c'
-          }
-        },
-        min: 0,
-        forceNiceScale: true,
-        labels: {
-          style: {
-            colors: '#78909c'
-          }
-        }
-      },
-      legend: { 
-        position: 'top',
-        horizontalAlign: 'right',
-        markers: {
-          radius: 2
-        },
-        itemMargin: {
-          horizontal: 10
-        }
-      },
-      tooltip: { 
-        enabled: true,
-        x: { 
-          format: 'HH:mm' 
-        },
-        style: {
-          fontSize: '12px'
-        }
-      }
-    };
-  }
+      }],
+      "default": null
+    },
 
-  private loadData() {
-    this.http.get<any[]>('/assets/generated_records.json').subscribe({
-      next: (data) => {
-        this.processData(data);
-        this.loading = false;
-      },
-      error: (err) => {
-        console.error('Error loading data:', err);
-        this.loading = false;
-        this.error = true;
-      }
-    });
-  }
+    { "name": "rejectReasonCode", "type": ["null", "string"], "default": null },
+    { "name": "rejectReason", "type": ["null", "string"], "default": null },
 
-  private processData(data: any[]) {
-    // Helper function to round time to nearest 5 minutes
-    const roundTo5Minutes = (date: Date) => {
-      const minutes = date.getMinutes();
-      const roundedMinutes = Math.floor(minutes / 5) * 5;
-      date.setMinutes(roundedMinutes, 0, 0);
-      return date.getTime();
-    };
+    { "name": "createdTimestamp", "type": ["null", "string"], "default": null },
+    { "name": "updatedTimestamp", "type": ["null", "string"], "default": null },
+    { "name": "createdBy", "type": ["null", "string"], "default": null },
+    { "name": "updatedBy", "type": ["null", "string"], "default": null },
 
-    // Initialize time buckets
-    const startTime = new Date('2025-04-08T12:00:00');
-    const endTime = new Date('2025-04-08T14:45:00');
-    const buckets: Record<number, { total: number; stateChange: number; evidence: number }> = {};
-
-    // Create empty buckets for each 5-minute interval
-    for (let time = new Date(startTime); time <= endTime; time.setMinutes(time.getMinutes() + 5)) {
-      const bucketTime = roundTo5Minutes(new Date(time));
-      buckets[bucketTime] = { total: 0, stateChange: 0, evidence: 0 };
-    }
-
-    // Process each event
-    data.forEach(event => {
-      try {
-        const eventTime = new Date(event.event_time);
-        if (isNaN(eventTime.getTime())) {
-          console.warn('Invalid date format:', event.event_time);
-          return;
-        }
-        
-        const bucketTime = roundTo5Minutes(eventTime);
-        
-        if (buckets[bucketTime]) {
-          buckets[bucketTime].total++;
-          
-          if (event.meta_data?.type === 'STATECHANGE') {
-            buckets[bucketTime].stateChange++;
-          } else if (event.meta_data?.type === 'EVIDENCE') {
-            buckets[bucketTime].evidence++;
-          }
-        }
-      } catch (e) {
-        console.warn('Skipping malformed event:', event, e);
-      }
-    });
-
-    // Convert buckets to chart data
-    const timestamps = Object.keys(buckets).map(Number).sort((a, b) => a - b);
-    
-    this.chartOptions.series = [
-      {
-        name: 'Total Events',
-        data: timestamps.map(t => ({
-          x: t,
-          y: buckets[t].total
-        }))
-      },
-      {
-        name: 'State Changes',
-        data: timestamps.map(t => ({
-          x: t,
-          y: buckets[t].stateChange
-        }))
-      },
-      {
-        name: 'Evidence',
-        data: timestamps.map(t => ({
-          x: t,
-          y: buckets[t].evidence
-        }))
-      }
-    ];
-
-    // Update x-axis range if needed
-    this.chartOptions.xaxis = {
-      ...this.chartOptions.xaxis,
-      min: startTime.getTime(),
-      max: endTime.getTime()
-    };
-  }
-
-  // Optional: Add refresh capability
-  refreshData() {
-    this.loading = true;
-    this.error = false;
-    this.loadData();
-  }
+    { "name": "addenda", "type": ["null", "string"], "default": null }
+  ]
 }
