@@ -1,166 +1,120 @@
-import { Component, OnInit } from '@angular/core';
-import {
-  ApexAxisChartSeries,
-  ApexChart,
-  ApexXAxis,
-  ApexDataLabels,
-  ApexStroke,
-  ApexTitleSubtitle,
-  ApexLegend
-} from 'ng-apexcharts';
-import * as rawData from '../../assets/generated_records.json';
+{
+  "endToEndId": "2261769372531",
+  "transactionId": "0723120500001003-v2",
+  "version": 1,
+  "instructionId": "W072312050000514",
+  "uid": "700491",
+  "lob": "PWM",
+  "channelId": "OLBWEB",
+  "channelSubId": "RET",
+  "entity": 1,
+  "parentReference": null,
 
-export type ChartOptions = {
-  series: ApexAxisChartSeries;
-  chart: ApexChart;
-  xaxis: ApexXAxis;
-  dataLabels: ApexDataLabels;
-  stroke: ApexStroke;
-  title: ApexTitleSubtitle;
-  legend: ApexLegend;
-};
+  "transactionType": "CT",
+  "transactionCategory": "TRANSFER",
 
-@Component({
-  selector: 'app-event-chart',
-  templateUrl: './event-chart.component.html',
-  styleUrls: ['./event-chart.component.css']
-})
-export class EventChartComponent implements OnInit {
-  public chartOptions: Partial<ChartOptions>;
+  "initiatorCif": "009898121290012",
+  "initiatorName": "Jim K",
+  "initiatorAlternativeName": null,
 
-  constructor() {}
+  "initiatorAddress": {
+    "addressType": "HOME",
+    "address1": "123 Main St",
+    "address2": null,
+    "street": "Main Street",
+    "buildingNumber": "10A",
+    "postalCode": "30001",
+    "townName": "Atlanta",
+    "state": "GA",
+    "country": "US",
+    "prefix": "+1",
+    "phoneNumber": "4045551234",
+    "mobileNumber": "4045555678",
+    "faxNumber": null
+  },
 
-  ngOnInit(): void {
-    const grouped = this.processData((rawData as any).default);
-    const categories = Array.from(new Set(grouped.map((item: any) => item.time)));
+  "creditorAccountNumber": "13670765906511371",
+  "creditorAccountType": "DDA",
+  "creditorAccountName": "Personal Account",
+  "creditorLastName": null,
+  "creditorAccountRoutingCode": null,
+  "creditorMop": "BOOK",
+  "creditorCurrency": "USD",
 
-    const types = Array.from(
-      new Set(grouped.flatMap((item: any) => Object.keys(item.counts)))
-    );
+  "creditorAddress": {
+    "addressType": "HOME",
+    "address1": "123 Main St",
+    "address2": null,
+    "street": "Main Street",
+    "buildingNumber": "10A",
+    "postalCode": "30001",
+    "townName": "Atlanta",
+    "state": "GA",
+    "country": "US",
+    "prefix": "+1",
+    "phoneNumber": "4045551234",
+    "mobileNumber": "4045555678",
+    "faxNumber": null
+  },
 
-    const series = types.map(type => ({
-      name: type,
-      data: categories.map(time => {
-        const item = grouped.find(i => i.time === time);
-        return item?.counts[type] || 0;
-      })
-    }));
+  "creditorAccountNumberSearch": "1988815783022",
 
-    this.chartOptions = {
-      series,
-      chart: {
-        height: 400,
-        type: 'line',
-        zoom: { enabled: false }
-      },
-      dataLabels: {
-        enabled: false
-      },
-      stroke: {
-        curve: 'smooth'
-      },
-      title: {
-        text: 'Event Types per 5 Minute Interval',
-        align: 'left'
-      },
-      xaxis: {
-        categories
-      },
-      legend: {
-        position: 'top'
-      }
-    };
-  }
+  "debtorAccountNumber": "40419463",
+  "debtorAccountType": "INV",
+  "debtorAccountName": "Personal Account",
+  "debtorLastName": null,
+  "debtorAccountRoutingCode": null,
+  "debtorMop": "BOOK",
+  "debtorCurrency": "USD",
 
-  processData(data: any[]): { time: string; counts: { [key: string]: number } }[] {
-    const grouped = new Map<string, { [key: string]: number }>();
+  "debtorAddress": {
+    "addressType": "HOME",
+    "address1": "456 Market St",
+    "address2": null,
+    "street": "Market Street",
+    "buildingNumber": "22B",
+    "postalCode": "30303",
+    "townName": "Atlanta",
+    "state": "GA",
+    "country": "US",
+    "prefix": "+1",
+    "phoneNumber": "4045559999",
+    "mobileNumber": "4045558888",
+    "faxNumber": null
+  },
 
-    data.forEach(event => {
-      const date = new Date(event.event_time);
-      date.setSeconds(0, 0);
-      const interval = new Date(Math.floor(date.getTime() / (5 * 60 * 1000)) * (5 * 60 * 1000));
-      const timeKey = interval.toISOString().slice(0, 16).replace('T', ' ');
+  "frequencyType": "2",
+  "amount": 0.00,
+  "insAmount": 5.57,
 
-      const type = event.meta_data?.type ?? 'UNKNOWN';
-      const counts = grouped.get(timeKey) || {};
-      counts[type] = (counts[type] || 0) + 1;
-      grouped.set(timeKey, counts);
-    });
+  "executionDate": "2023-12-05",
+  "settlementDate": "2023-12-05",
 
-    return Array.from(grouped.entries()).map(([time, counts]) => ({ time, counts }));
-  }
-}
+  "purpose": "Savings",
+  "paymentType": "0",
+  "amountType": "OTHR",
 
-/////////////////////
+  "status": "REJECTED",
+  "state": "REJECTED",
+  "businessStatus": "Rejected",
 
-"resolveJsonModule": true,
-"esModuleInterop": true
+  "direction": "OUTBOUND",
+  "unverifiedFundFlag": false,
 
-///////////////
-import { NgModule } from '@angular/core';
-import { BrowserModule } from '@angular/platform-browser';
-import { AppComponent } from './app.component';
-import { EventChartComponent } from './event-chart/event-chart.component';
-import { NgApexchartsModule } from 'ng-apexcharts';
-
-@NgModule({
-  declarations: [AppComponent, EventChartComponent],
-  imports: [BrowserModule, NgApexchartsModule],
-  bootstrap: [AppComponent]
-})
-export class AppModule {}
-
-///////////////
-
-<div *ngIf="chartOptions">
-  <apx-chart
-    [series]="chartOptions.series"
-    [chart]="chartOptions.chart"
-    [xaxis]="chartOptions.xaxis"
-    [dataLabels]="chartOptions.dataLabels"
-    [stroke]="chartOptions.stroke"
-    [title]="chartOptions.title"
-    [legend]="chartOptions.legend"
-  ></apx-chart>
-</div>
-
-///// defaukt zoom 
-this.chartOptions = {
-  series,
-  chart: {
-    height: 400,
-    type: 'line',
-    zoom: {
-      enabled: true,              // Enable zoom
-      type: 'x',                  // 'x', 'y', or 'xy' — you likely want 'x'
-      autoScaleYaxis: true        // Optional: auto scale y-axis while zooming
-    },
-    toolbar: {
-      autoSelected: 'zoom',       // Default tool
-      tools: {
-        pan: true,                // Enable panning
-        zoom: true,
-        zoomin: true,
-        zoomout: true,
-        reset: true
-      }
+  "transactionAmount": [
+    {
+      "code": "1",
+      "value": "2"
     }
-  },
-  dataLabels: {
-    enabled: false
-  },
-  stroke: {
-    curve: 'smooth'
-  },
-  title: {
-    text: 'Event Types per 5 Minute Interval',
-    align: 'left'
-  },
-  xaxis: {
-    categories
-  },
-  legend: {
-    position: 'top'
-  }
-};
+  ],
 
+  "rejectReasonCode": "7",
+  "rejectReason": "Invalid account",
+
+  "createdTimestamp": "2023-12-05 07:37:39.756392",
+  "updatedTimestamp": "2023-12-05 07:37:53.076535",
+  "createdBy": "G19624",
+  "updatedBy": "G19624",
+
+  "addenda": null
+}
