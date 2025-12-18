@@ -1,55 +1,127 @@
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.core.io.Resource;
-
 import javax.net.ssl.*;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.InputStream;
 import java.security.KeyStore;
 import java.security.SecureRandom;
 
+import org.springframework.stereotype.Component;
+
+@Component
 public class MQSSLContextConfig {
 
     public SSLContext getSslContext(SSLProperties sslProps) throws Exception {
 
-        // 1) Load KeyStore (client cert)
+        validate(sslProps);
+
+        // Required for IBM MQ when using non-IBM JVM
+        System.setProperty(
+                "com.ibm.mq.cfg.useIBMCipherMappings",
+                "false"
+        );
+
+        // ---------- LOAD KEYSTORE ----------
         KeyStore keyStore = KeyStore.getInstance(sslProps.getType());
-        Resource ksRes = resolveResource(sslProps.getKeystore());
-
-        try (InputStream ksIn = ksRes.getInputStream()) {
-            keyStore.load(ksIn, sslProps.getPassword().toCharArray());
+        try (InputStream ksStream = openStream(sslProps.getKeystore())) {
+            keyStore.load(
+                    ksStream,
+                    sslProps.getPassword().toCharArray()
+            );
         }
 
-        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-        kmf.init(keyStore, sslProps.getPassword().toCharArray());
+        KeyManagerFactory kmf =
+                KeyManagerFactory.getInstance(
+                        KeyManagerFactory.getDefaultAlgorithm()
+                );
+        kmf.init(
+                keyStore,
+                sslProps.getPassword().toCharArray()
+        );
 
-        // 2) Load TrustStore (server cert chain)
+        // ---------- LOAD TRUSTSTORE ----------
         KeyStore trustStore = KeyStore.getInstance(sslProps.getType());
-        Resource tsRes = resolveResource(sslProps.getTruststore());
-
-        try (InputStream tsIn = tsRes.getInputStream()) {
-            trustStore.load(tsIn, sslProps.getPassword().toCharArray());
+        try (InputStream tsStream = openStream(sslProps.getTruststore())) {
+            trustStore.load(
+                    tsStream,
+                    sslProps.getPassword().toCharArray()
+            );
         }
 
-        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        TrustManagerFactory tmf =
+                TrustManagerFactory.getInstance(
+                        TrustManagerFactory.getDefaultAlgorithm()
+                );
         tmf.init(trustStore);
 
-        // 3) Build SSLContext
-        SSLContext sslContext = SSLContext.getInstance(sslProps.getVersion()); // ex: TLSv1.2 or TLSv1.3
-        sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), new SecureRandom());
+        // ---------- BUILD SSL CONTEXT ----------
+        SSLContext sslContext =
+                SSLContext.getInstance(sslProps.getVersion());
+
+        sslContext.init(
+                kmf.getKeyManagers(),
+                tmf.getTrustManagers(),
+                new SecureRandom()
+        );
 
         return sslContext;
     }
 
-    private Resource resolveResource(String path) {
-        if (path == null) throw new IllegalArgumentException("Keystore/Truststore path is null");
+    /**
+     * Supports:
+     *  - classpath:cert/file.p12
+     *  - /opt/mulecert/file.p12
+     *  - C:/cert/file.p12
+     */
+    private InputStream openStream(String location) throws IOException {
 
-        // allow both: "classpath:cert/mqawskeystore.p12" and "cert/mqawskeystore.p12"
-        if (path.startsWith("classpath:")) {
-            String p = path.substring("classpath:".length());
-            if (p.startsWith("/")) p = p.substring(1);
-            return new ClassPathResource(p);
+        if (location == null || location.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Keystore / Truststore path must not be empty"
+            );
         }
 
-        // treat as classpath by default (recommended)
-        return new ClassPathResource(path.startsWith("/") ? path.substring(1) : path);
+        // ----- CLASSPATH -----
+        if (location.startsWith("classpath:")) {
+
+            String path = location.substring("classpath:".length());
+            if (path.startsWith("/")) {
+                path = path.substring(1);
+            }
+
+            ClassLoader classLoader =
+                    Thread.currentThread().getContextClassLoader();
+
+            InputStream is = classLoader.getResourceAsStream(path);
+
+            if (is == null) {
+                throw new FileNotFoundException(
+                        "Classpath resource not found: " + location
+                );
+            }
+            return is;
+        }
+
+        // ----- FILESYSTEM -----
+        return new FileInputStream(location);
+    }
+
+    private void validate(SSLProperties props) {
+
+        if (props.getKeystore() == null || props.getKeystore().isBlank()) {
+            throw new IllegalArgumentException("ssl.keystore is required");
+        }
+        if (props.getTruststore() == null || props.getTruststore().isBlank()) {
+            throw new IllegalArgumentException("ssl.truststore is required");
+        }
+        if (props.getPassword() == null || props.getPassword().isBlank()) {
+            throw new IllegalArgumentException("ssl.password is required");
+        }
+        if (props.getType() == null || props.getType().isBlank()) {
+            throw new IllegalArgumentException("ssl.type is required");
+        }
+        if (props.getVersion() == null || props.getVersion().isBlank()) {
+            throw new IllegalArgumentException("ssl.version is required");
+        }
     }
 }
