@@ -1,35 +1,55 @@
-TopicPartition tp = new TopicPartition(topic, partition);
-        try (KafkaConsumer<String, Object> consumer = new KafkaConsumer<>(cfg, keyDes, valueDes)) {
-            consumer.assign(Collections.singletonList(tp));
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.Resource;
 
-            // Validate offset range
-            Long beginning = consumer.beginningOffsets(Collections.singleton(tp)).get(tp);
-            Long end = consumer.endOffsets(Collections.singleton(tp)).get(tp);
-            if (beginning != null && end != null) {
-                if (offset < beginning || offset >= end) {
-                    log.warn("Requested offset {} out of range [{}, {}) for {}-{}", offset, beginning, end, topic, partition);
-                    return null;
-                }
-            }
+import javax.net.ssl.*;
+import java.io.InputStream;
+import java.security.KeyStore;
+import java.security.SecureRandom;
 
-            consumer.seek(tp, offset);
+public class MQSSLContextConfig {
 
-            long deadline = System.currentTimeMillis() + Math.max(0, timeoutMs);
-            while (System.currentTimeMillis() < deadline) {
-                long remaining = Math.max(1, deadline - System.currentTimeMillis());
-                ConsumerRecords<String, Object> records = consumer.poll(Duration.ofMillis(Math.min(500, remaining)));
-                for (ConsumerRecord<String, Object> rec : records.records(tp)) {
-                    if (rec.offset() == offset) {
-                        return rec;
-                    } else if (rec.offset() > offset) {
-                        // We passed the desired offset without seeing it
-                        return null;
-                    }
-                }
-            }
-            return null;
-        } catch (Exception e) {
-            log.error("Failed to read single message from {}-{}@{}", topic, partition, offset, e);
-            return null;
+    public SSLContext getSslContext(SSLProperties sslProps) throws Exception {
+
+        // 1) Load KeyStore (client cert)
+        KeyStore keyStore = KeyStore.getInstance(sslProps.getType());
+        Resource ksRes = resolveResource(sslProps.getKeystore());
+
+        try (InputStream ksIn = ksRes.getInputStream()) {
+            keyStore.load(ksIn, sslProps.getPassword().toCharArray());
         }
+
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(keyStore, sslProps.getPassword().toCharArray());
+
+        // 2) Load TrustStore (server cert chain)
+        KeyStore trustStore = KeyStore.getInstance(sslProps.getType());
+        Resource tsRes = resolveResource(sslProps.getTruststore());
+
+        try (InputStream tsIn = tsRes.getInputStream()) {
+            trustStore.load(tsIn, sslProps.getPassword().toCharArray());
+        }
+
+        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        tmf.init(trustStore);
+
+        // 3) Build SSLContext
+        SSLContext sslContext = SSLContext.getInstance(sslProps.getVersion()); // ex: TLSv1.2 or TLSv1.3
+        sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), new SecureRandom());
+
+        return sslContext;
     }
+
+    private Resource resolveResource(String path) {
+        if (path == null) throw new IllegalArgumentException("Keystore/Truststore path is null");
+
+        // allow both: "classpath:cert/mqawskeystore.p12" and "cert/mqawskeystore.p12"
+        if (path.startsWith("classpath:")) {
+            String p = path.substring("classpath:".length());
+            if (p.startsWith("/")) p = p.substring(1);
+            return new ClassPathResource(p);
+        }
+
+        // treat as classpath by default (recommended)
+        return new ClassPathResource(path.startsWith("/") ? path.substring(1) : path);
+    }
+}
