@@ -1,121 +1,16 @@
-import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { CompanyEnrollmentFormComponent } from './company-enrollment-form.component';
-import { ActivatedRoute, Router } from '@angular/router';
-import { of } from 'rxjs';
-import { ReactiveFormsModule } from '@angular/forms';
-import { ChangeDetectorRef } from '@angular/core';
-import { AVSService } from 'src/app/services/avs.service';
-import { CommonService } from 'src/app/services/common.service';
-import { TruCoreModalComponent } from 'src/app/components/tru-core-modal/tru-core-modal.component';
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
-describe('CompanyEnrollmentFormComponent', () => {
-  let component: CompanyEnrollmentFormComponent;
-  let fixture: ComponentFixture<CompanyEnrollmentFormComponent>;
-  let mockAVSService: any;
-  let mockCommonService: any;
-  let mockRouter: any;
-  let mockRoute: any;
-  let mockChangeDetectorRef: any;
+import java.util.regex.Pattern;
 
-  beforeEach(async () => {
-    mockAVSService = {
-      getCompanyById: jasmine.createSpy().and.returnValue(of({ body: { data: { name: 'Test Company' } } })),
-      addOrUpdateCompanyEnrollment: jasmine.createSpy().and.returnValue(of({ body: {} })),
-    };
+public final class LogSanitizer {
+  private static final Pattern CTRL = Pattern.compile("[\\r\\n\\t\\f\\u0000-\\u001F\\u007F]");
 
-    mockCommonService = {
-      trimValues: jasmine.createSpy()
-    };
+  private LogSanitizer() {}
 
-    mockRouter = {
-      navigate: jasmine.createSpy(),
-      navigateByUrl: jasmine.createSpy()
-    };
-
-    mockRoute = {
-      paramMap: of({
-        get: (key: string) => key === 'secondaryClientId' ? '123' : null
-      })
-    };
-
-    mockChangeDetectorRef = {
-      detectChanges: jasmine.createSpy()
-    };
-
-    await TestBed.configureTestingModule({
-      declarations: [CompanyEnrollmentFormComponent],
-      imports: [ReactiveFormsModule],
-      providers: [
-        { provide: ActivatedRoute, useValue: mockRoute },
-        { provide: AVSService, useValue: mockAVSService },
-        { provide: CommonService, useValue: mockCommonService },
-        { provide: Router, useValue: mockRouter },
-        { provide: ChangeDetectorRef, useValue: mockChangeDetectorRef },
-      ]
-    }).compileComponents();
-
-    fixture = TestBed.createComponent(CompanyEnrollmentFormComponent);
-    component = fixture.componentInstance;
-
-    // initialize ceFormGroup to avoid undefined errors
-    component.ceFormGroup = component['fb'].group({
-      primaryId: [''],
-      secondaryClientId: [''],
-    });
-
-    fixture.detectChanges();
-  });
-
-  it('should create component', () => {
-    expect(component).toBeTruthy();
-  });
-
-  it('should detect changes on ngAfterViewChecked', () => {
-    component.ngAfterViewChecked();
-    expect(mockChangeDetectorRef.detectChanges).toHaveBeenCalled();
-  });
-
-  it('should enter edit mode and fetch company data in ngOnInit', () => {
-    spyOn(component, 'fetchCompanyData');
-    component.ngOnInit();
-    expect(component.isEditMode).toBeTrue();
-    expect(component.fetchCompanyData).toHaveBeenCalledWith('123');
-  });
-
-  it('should patch form and set success on successful company fetch', () => {
-    component.fetchCompanyData('123');
-    expect(component.company?.name).toBe('Test Company');
-    expect(component.isResponseSuccess).toBeTrue();
-  });
-
-  it('should not call API if no changes detected on save', () => {
-    component.isEditMode = true;
-    component.initialFormValue = { name: 'Same' };
-    spyOn(component, 'getFormValueSnapshot').and.returnValue({ name: 'Same' });
-    component.saveOrUpdateCompanyEnrollment();
-    expect(component.responseMessage).toBe('No Change Detected');
-    expect(component.isResponseSuccess).toBeFalse();
-  });
-
-  it('should call API if form is valid and changed', () => {
-    component.isEditMode = true;
-    component.initialFormValue = { name: 'Old' };
-    component.ceFormGroup.patchValue({ name: 'New' });
-    spyOn(component, 'getFormValueSnapshot').and.returnValue({ name: 'New' });
-    spyOn(component, 'isFormUnchanged').and.returnValue(false);
-    component.saveOrUpdateCompanyEnrollment();
-    expect(mockAVSService.addOrUpdateCompanyEnrollment).toHaveBeenCalled();
-  });
-
-  it('should navigate to /avs/company-enrollment on cancel', () => {
-    component.cancel();
-    expect(mockRouter.navigate).toHaveBeenCalledWith(['/avs/company-enrollment']);
-  });
-
-  it('should navigate to company-enrollment on modal click', () => {
-    component._successModal = { hide: jasmine.createSpy('hide') } as any;
-    component.onNestedButtonClick();
-    expect(component._successModal.hide).toHaveBeenCalled();
-    expect(mockRouter.navigateByUrl).toHaveBeenCalledWith('avs/company-enrollment');
-  });
-});
+  public static String sanitize(String input) {
+    if (input == null) return null;
+    // Replace control characters with a visible placeholder (or a space).
+    return CTRL.matcher(input).replaceAll("_");
+  }
+}
