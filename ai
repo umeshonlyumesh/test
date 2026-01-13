@@ -1,16 +1,112 @@
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.kafka.clients.producer.RecordMetadata;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.*;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.util.regex.Pattern;
+import javax.jms.Message;
+import javax.jms.TextMessage;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
-public final class LogSanitizer {
-  private static final Pattern CTRL = Pattern.compile("[\\r\\n\\t\\f\\u0000-\\u001F\\u007F]");
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
-  private LogSanitizer() {}
+@ExtendWith(MockitoExtension.class)
+class MQL2FraudServiceTest {
 
-  public static String sanitize(String input) {
-    if (input == null) return null;
-    // Replace control characters with a visible placeholder (or a space).
-    return CTRL.matcher(input).replaceAll("_");
-  }
+    @InjectMocks
+    private MQL2FraudService service;
+
+    @Mock
+    private KafkaProducerWrapper producer;   // <-- whatever your wrapper is
+
+    @Mock
+    private ObjectMapper mapper;
+
+    @Mock
+    private TextMessage textMessage;
+
+    @BeforeEach
+    void setup() throws Exception {
+        when(mapper.writerWithDefaultPrettyPrinter()).thenReturn(mapper);
+        when(mapper.writeValueAsString(any())).thenReturn("{json}");
+    }
+
+    @Test
+    void shouldProcessValidTextMessageAndPublishToKafka() throws Exception {
+        // MQ payload format: part0|part1|responseCode
+        String payload = "TXN1234]|SOME_DATA|RELEASE";
+
+        when(textMessage.getText()).thenReturn(payload);
+
+        RecordMetadata metadata = mock(RecordMetadata.class);
+        when(metadata.partition()).thenReturn(1);
+        when(metadata.offset()).thenReturn(10L);
+
+        CompletableFuture<RecordMetadata> future =
+                CompletableFuture.completedFuture(metadata);
+
+        when(producer.sendString(
+                anyString(),
+                eq("TXN1234"),
+                anyString(),
+                anyMap()
+        )).thenReturn(future);
+
+        // Act
+        service.onL2MessageEvent(textMessage);
+
+        // Assert
+        verify(producer).sendString(
+                anyString(),
+                eq("TXN1234"),
+                anyString(),
+                argThat(headers ->
+                        "TXN1234".equals(headers.get("kafka_correlationId"))
+                )
+        );
+    }
+
+    @Test
+    void shouldIgnoreNonTextMessage() {
+        Message nonTextMessage = mock(Message.class);
+
+        service.onL2MessageEvent(nonTextMessage);
+
+        verifyNoInteractions(producer);
+    }
+
+    @Test
+    void shouldNotPublishWhenPayloadPatternIsInvalid() throws Exception {
+        when(textMessage.getText()).thenReturn("INVALID_PAYLOAD");
+
+        service.onL2MessageEvent(textMessage);
+
+        verifyNoInteractions(producer);
+    }
+
+    @Test
+    void shouldConvertCancelResponseToDeny() throws Exception {
+        String payload = "TXN999]|DATA|CANCEL";
+
+        when(textMessage.getText()).thenReturn(payload);
+
+        CompletableFuture<RecordMetadata> future =
+                CompletableFuture.completedFuture(mock(RecordMetadata.class));
+
+        when(producer.sendString(any(), any(), any(), any()))
+                .thenReturn(future);
+
+        service.onL2MessageEvent(textMessage);
+
+        verify(producer).sendString(
+                anyString(),
+                eq("TXN999"),
+                contains("Deny"),
+                anyMap()
+        );
+    }
 }
