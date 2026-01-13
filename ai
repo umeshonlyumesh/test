@@ -1,112 +1,481 @@
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.kafka.clients.producer.RecordMetadata;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.*;
-import org.mockito.junit.jupiter.MockitoExtension;
+import org.apache.kafka.clients.consumer.*;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.errors.RetriableException;
+import org.apache.kafka.common.errors.WakeupException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.env.Environment;
 
-import javax.jms.Message;
-import javax.jms.TextMessage;
-import java.util.Map;
-import java.util.concurrent.CompletableFuture;
+import java.lang.reflect.Method;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+public class KafkaConsumerRunnerPartitionChunking {
 
-@ExtendWith(MockitoExtension.class)
-class MQL2FraudServiceTest {
+    private static final Logger log = LoggerFactory.getLogger(KafkaConsumerRunnerPartitionChunking.class);
 
-    @InjectMocks
-    private MQL2FraudService service;
+    private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+    private final KafkaSdkProperties props;
+    private final KafkaProducerClient producerClient;
+    private final Environment environment;
 
-    @Mock
-    private KafkaProducerWrapper producer;   // <-- whatever your wrapper is
+    private final Set<KafkaConsumer<String, Object>> activeConsumers = ConcurrentHashMap.newKeySet();
+    private final AtomicBoolean running = new AtomicBoolean(false);
 
-    @Mock
-    private ObjectMapper mapper;
-
-    @Mock
-    private TextMessage textMessage;
-
-    @BeforeEach
-    void setup() throws Exception {
-        when(mapper.writerWithDefaultPrettyPrinter()).thenReturn(mapper);
-        when(mapper.writeValueAsString(any())).thenReturn("{json}");
+    public KafkaConsumerRunnerPartitionChunking(KafkaSdkProperties props,
+                                               KafkaProducerClient producerClient,
+                                               Environment environment) {
+        this.props = props;
+        this.producerClient = producerClient;
+        this.environment = environment;
+        Runtime.getRuntime().addShutdownHook(new Thread(this::stop));
     }
 
-    @Test
-    void shouldProcessValidTextMessageAndPublishToKafka() throws Exception {
-        // MQ payload format: part0|part1|responseCode
-        String payload = "TXN1234]|SOME_DATA|RELEASE";
-
-        when(textMessage.getText()).thenReturn(payload);
-
-        RecordMetadata metadata = mock(RecordMetadata.class);
-        when(metadata.partition()).thenReturn(1);
-        when(metadata.offset()).thenReturn(10L);
-
-        CompletableFuture<RecordMetadata> future =
-                CompletableFuture.completedFuture(metadata);
-
-        when(producer.sendString(
-                anyString(),
-                eq("TXN1234"),
-                anyString(),
-                anyMap()
-        )).thenReturn(future);
-
-        // Act
-        service.onL2MessageEvent(textMessage);
-
-        // Assert
-        verify(producer).sendString(
-                anyString(),
-                eq("TXN1234"),
-                anyString(),
-                argThat(headers ->
-                        "TXN1234".equals(headers.get("kafka_correlationId"))
-                )
-        );
+    public void registerListener(Object bean) {
+        for (Method method : bean.getClass().getDeclaredMethods()) {
+            KafkaConsumerListener ann = method.getAnnotation(KafkaConsumerListener.class);
+            if (ann != null) {
+                startConsumer(bean, method, ann);
+            }
+        }
     }
 
-    @Test
-    void shouldIgnoreNonTextMessage() {
-        Message nonTextMessage = mock(Message.class);
+    private void startConsumer(Object bean, Method method, KafkaConsumerListener ann) {
+        running.set(true);
 
-        service.onL2MessageEvent(nonTextMessage);
+        final String topic = environment.resolvePlaceholders(ann.topic());
+        final int chunkSize = Integer.parseInt(environment.resolvePlaceholders(ann.chunkSize()));
+        final Duration flushTimeout = Duration.ofMillis(Long.parseLong(environment.resolvePlaceholders(ann.flushTimeoutMs())));
+        final Duration pollTimeout = Duration.ofMillis(Integer.parseInt(environment.resolvePlaceholders(ann.pollIntervalMs())));
 
-        verifyNoInteractions(producer);
+        executor.submit(() -> runConsumerLoop(bean, method, ann, topic, chunkSize, flushTimeout, pollTimeout));
     }
 
-    @Test
-    void shouldNotPublishWhenPayloadPatternIsInvalid() throws Exception {
-        when(textMessage.getText()).thenReturn("INVALID_PAYLOAD");
+    private void runConsumerLoop(Object bean,
+                                 Method method,
+                                 KafkaConsumerListener ann,
+                                 String topic,
+                                 int chunkSize,
+                                 Duration flushTimeout,
+                                 Duration pollTimeout) {
 
-        service.onL2MessageEvent(textMessage);
+        Properties cfg = getProperties(ann);
 
-        verifyNoInteractions(producer);
+        // Per-partition buffers
+        final Map<TopicPartition, PartitionBuffer> buffers = new ConcurrentHashMap<>();
+
+        // Offsets safe to commit
+        final Map<TopicPartition, OffsetAndMetadata> processedOffsets = new ConcurrentHashMap<>();
+
+        long backoffMs = 250;
+        final long maxBackoffMs = 10_000;
+
+        try (KafkaConsumer<String, Object> consumer = new KafkaConsumer<>(cfg)) {
+            activeConsumers.add(consumer);
+
+            consumer.subscribe(Collections.singletonList(topic), new ConsumerRebalanceListener() {
+                @Override
+                public void onPartitionsRevoked(Collection<TopicPartition> partitions) {
+                    // Flush and commit for partitions we are losing
+                    flushAndCommitRevokedPartitions(consumer, bean, method, topic,
+                            partitions, buffers, processedOffsets);
+                    // cleanup
+                    partitions.forEach(buffers::remove);
+                    partitions.forEach(processedOffsets::remove);
+                }
+
+                @Override
+                public void onPartitionsAssigned(Collection<TopicPartition> partitions) {
+                    // Initialize buffers
+                    for (TopicPartition tp : partitions) {
+                        buffers.computeIfAbsent(tp, p -> new PartitionBuffer(chunkSize));
+                    }
+                }
+            });
+
+            log.info("Kafka consumer started (per-partition chunking). topic={}, groupId={}",
+                    topic, cfg.getProperty(ConsumerConfig.GROUP_ID_CONFIG));
+
+            while (running.get()) {
+                try {
+                    ConsumerRecords<String, Object> records = consumer.poll(pollTimeout);
+
+                    if (!records.isEmpty()) {
+                        backoffMs = 250; // reset backoff on activity
+                    }
+
+                    // 1) Add records to their partition buffer
+                    for (ConsumerRecord<String, Object> rec : records) {
+                        TopicPartition tp = new TopicPartition(rec.topic(), rec.partition());
+                        PartitionBuffer buf = buffers.computeIfAbsent(tp, p -> new PartitionBuffer(chunkSize));
+                        buf.add(rec);
+                    }
+
+                    // 2) Process full buffers
+                    for (Map.Entry<TopicPartition, PartitionBuffer> e : buffers.entrySet()) {
+                        TopicPartition tp = e.getKey();
+                        PartitionBuffer buf = e.getValue();
+
+                        while (buf.isFull()) {
+                            List<ConsumerRecord<String, Object>> batch = buf.drainChunk();
+                            processPartitionBatchAndMarkOffset(bean, method, topic, tp, batch, processedOffsets);
+                        }
+                    }
+
+                    // 3) Flush partial buffers by time
+                    Instant now = Instant.now();
+                    for (Map.Entry<TopicPartition, PartitionBuffer> e : buffers.entrySet()) {
+                        TopicPartition tp = e.getKey();
+                        PartitionBuffer buf = e.getValue();
+
+                        if (buf.shouldFlush(now, flushTimeout)) {
+                            List<ConsumerRecord<String, Object>> batch = buf.drainAll();
+                            if (!batch.isEmpty()) {
+                                processPartitionBatchAndMarkOffset(bean, method, topic, tp, batch, processedOffsets);
+                            }
+                        }
+                    }
+
+                    // 4) commit processed offsets (async) – safe snapshot
+                    commitAsyncSafe(consumer, processedOffsets);
+
+                } catch (WakeupException we) {
+                    if (!running.get()) break;
+                    throw we;
+
+                } catch (RetriableException re) {
+                    log.warn("Retriable Kafka error. topic={}, err={}", topic, re.toString());
+                    sleepQuietly(backoffMs);
+                    backoffMs = Math.min(maxBackoffMs, backoffMs * 2);
+
+                } catch (CommitFailedException cfe) {
+                    log.warn("CommitFailedException (likely rebalance). topic={}, err={}", topic, cfe.toString());
+
+                } catch (Exception e) {
+                    log.error("Unexpected error in consumer loop. topic={}", topic, e);
+                    sleepQuietly(backoffMs);
+                    backoffMs = Math.min(maxBackoffMs, backoffMs * 2);
+                }
+            }
+
+            // graceful shutdown: flush everything we still have, then commitSync
+            flushAllPartitions(consumer, bean, method, topic, buffers, processedOffsets);
+            commitSyncSafe(consumer, processedOffsets);
+
+            log.info("Kafka consumer stopped. topic={}", topic);
+
+        } catch (Exception fatal) {
+            log.error("Kafka consumer died. topic={}", topic, fatal);
+            throw new RuntimeException("Kafka consumer failed for topic=" + topic, fatal);
+        } finally {
+            activeConsumers.removeIf(Objects::isNull);
+        }
     }
 
-    @Test
-    void shouldConvertCancelResponseToDeny() throws Exception {
-        String payload = "TXN999]|DATA|CANCEL";
+    // =========================
+    // Processing / DLQ / Offset
+    // =========================
 
-        when(textMessage.getText()).thenReturn(payload);
+    private void processPartitionBatchAndMarkOffset(Object bean,
+                                                    Method method,
+                                                    String topic,
+                                                    TopicPartition tp,
+                                                    List<ConsumerRecord<String, Object>> batch,
+                                                    Map<TopicPartition, OffsetAndMetadata> processedOffsets) throws Exception {
+        try {
+            method.setAccessible(true);
+            method.invoke(bean, batch);
 
-        CompletableFuture<RecordMetadata> future =
-                CompletableFuture.completedFuture(mock(RecordMetadata.class));
+            markPartitionOffset(tp, batch, processedOffsets);
 
-        when(producer.sendString(any(), any(), any(), any()))
-                .thenReturn(future);
+        } catch (Exception handlerEx) {
+            log.error("Error processing partition batch. topic={}, tp={}, size={}", topic, tp, batch.size(), handlerEx);
 
-        service.onL2MessageEvent(textMessage);
+            if (!isDlqEnabled()) {
+                // No DLQ => retry later (do not commit)
+                throw handlerEx;
+            }
 
-        verify(producer).sendString(
-                anyString(),
-                eq("TXN999"),
-                contains("Deny"),
-                anyMap()
-        );
+            boolean dlqOk = sendBatchToDlq(topic, batch);
+            if (dlqOk) {
+                // DLQ success => commit offsets so poison pills don't loop forever
+                markPartitionOffset(tp, batch, processedOffsets);
+            } else {
+                // DLQ failed => do not commit, retry later
+                throw handlerEx;
+            }
+        }
+    }
+
+    private void markPartitionOffset(TopicPartition tp,
+                                     List<ConsumerRecord<String, Object>> batch,
+                                     Map<TopicPartition, OffsetAndMetadata> processedOffsets) {
+        if (batch.isEmpty()) return;
+        // batch is ordered for that partition; last record defines commit point
+        ConsumerRecord<String, Object> last = batch.get(batch.size() - 1);
+        processedOffsets.put(tp, new OffsetAndMetadata(last.offset() + 1));
+    }
+
+    private boolean sendBatchToDlq(String sourceTopic, List<ConsumerRecord<String, Object>> batch) {
+        String dlqTopic = resolveDlqTopic(sourceTopic);
+
+        try {
+            for (ConsumerRecord<String, Object> rec : batch) {
+                Object value = rec.value();
+
+                if (value instanceof org.apache.avro.specific.SpecificRecord sr) {
+                    String json = toJson(sr);
+                    producerClient.sendString(dlqTopic, rec.key(), json);
+                } else {
+                    log.error("DLQ skipped (non-SpecificRecord). dlqTopic={}, valueType={}",
+                            dlqTopic, value == null ? "null" : value.getClass().getName());
+                    return false; // safer: do not lose message
+                }
+            }
+            log.info("DLQ publish success. dlqTopic={}, count={}", dlqTopic, batch.size());
+            return true;
+        } catch (Exception e) {
+            log.error("DLQ publish failed. dlqTopic={}, count={}", dlqTopic, batch.size(), e);
+            return false;
+        }
+    }
+
+    // =========================
+    // Rebalance flush/commit
+    // =========================
+
+    private void flushAndCommitRevokedPartitions(KafkaConsumer<String, Object> consumer,
+                                                 Object bean,
+                                                 Method method,
+                                                 String topic,
+                                                 Collection<TopicPartition> revoked,
+                                                 Map<TopicPartition, PartitionBuffer> buffers,
+                                                 Map<TopicPartition, OffsetAndMetadata> processedOffsets) {
+        for (TopicPartition tp : revoked) {
+            PartitionBuffer buf = buffers.get(tp);
+            if (buf == null) continue;
+
+            List<ConsumerRecord<String, Object>> remaining = buf.drainAll();
+            if (!remaining.isEmpty()) {
+                try {
+                    processPartitionBatchAndMarkOffset(bean, method, topic, tp, remaining, processedOffsets);
+                } catch (Exception e) {
+                    log.error("Failed flushing revoked partition. tp={}, topic={}", tp, topic, e);
+                    // If flush fails we do NOT mark offsets. We'll rely on reprocessing after rebalance.
+                }
+            }
+        }
+
+        // Commit only revoked partitions synchronously
+        commitSyncForPartitions(consumer, processedOffsets, revoked);
+    }
+
+    private void flushAllPartitions(KafkaConsumer<String, Object> consumer,
+                                    Object bean,
+                                    Method method,
+                                    String topic,
+                                    Map<TopicPartition, PartitionBuffer> buffers,
+                                    Map<TopicPartition, OffsetAndMetadata> processedOffsets) {
+        for (Map.Entry<TopicPartition, PartitionBuffer> e : buffers.entrySet()) {
+            TopicPartition tp = e.getKey();
+            PartitionBuffer buf = e.getValue();
+
+            List<ConsumerRecord<String, Object>> remaining = buf.drainAll();
+            if (!remaining.isEmpty()) {
+                try {
+                    processPartitionBatchAndMarkOffset(bean, method, topic, tp, remaining, processedOffsets);
+                } catch (Exception ex) {
+                    log.error("Failed flushing partition on shutdown. tp={}, topic={}", tp, topic, ex);
+                }
+            }
+        }
+    }
+
+    // =========================
+    // Commit helpers
+    // =========================
+
+    private void commitAsyncSafe(KafkaConsumer<String, Object> consumer,
+                                 Map<TopicPartition, OffsetAndMetadata> processedOffsets) {
+        if (processedOffsets.isEmpty()) return;
+
+        Map<TopicPartition, OffsetAndMetadata> snapshot = new HashMap<>(processedOffsets);
+        consumer.commitAsync(snapshot, (offsets, exception) -> {
+            if (exception != null) {
+                log.warn("commitAsync failed: {}", exception.toString(), exception);
+            }
+        });
+    }
+
+    private void commitSyncSafe(KafkaConsumer<String, Object> consumer,
+                                Map<TopicPartition, OffsetAndMetadata> processedOffsets) {
+        if (processedOffsets.isEmpty()) return;
+        try {
+            consumer.commitSync(new HashMap<>(processedOffsets));
+        } catch (Exception e) {
+            log.warn("commitSync failed during shutdown: {}", e.toString(), e);
+        }
+    }
+
+    private void commitSyncForPartitions(KafkaConsumer<String, Object> consumer,
+                                         Map<TopicPartition, OffsetAndMetadata> processedOffsets,
+                                         Collection<TopicPartition> partitions) {
+        if (partitions == null || partitions.isEmpty()) return;
+
+        Map<TopicPartition, OffsetAndMetadata> toCommit = new HashMap<>();
+        for (TopicPartition tp : partitions) {
+            OffsetAndMetadata om = processedOffsets.get(tp);
+            if (om != null) toCommit.put(tp, om);
+        }
+        if (toCommit.isEmpty()) return;
+
+        try {
+            consumer.commitSync(toCommit);
+        } catch (Exception e) {
+            log.warn("commitSync failed onPartitionsRevoked: {}", e.toString(), e);
+        }
+    }
+
+    // =========================
+    // Config + utils
+    // =========================
+
+    private Properties getProperties(KafkaConsumerListener ann) {
+        Properties cfg = new Properties();
+
+        cfg.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, props.getBootstrapServers());
+        cfg.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, org.apache.kafka.common.serialization.StringDeserializer.class.getName());
+
+        // manual commit
+        cfg.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+
+        String groupId = environment.resolvePlaceholders(ann.groupId());
+        cfg.put(ConsumerConfig.GROUP_ID_CONFIG, (groupId == null || groupId.isBlank()) ? props.getDefaultGroupId() : groupId);
+
+        cfg.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, environment.resolvePlaceholders(ann.chunkSize()));
+
+        // Must be > worst-case processing time for a batch, else rebalance kicks you out
+        cfg.putIfAbsent(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, String.valueOf(props.getMaxPollIntervalMs()));
+
+        cfg.putIfAbsent(ConsumerConfig.RECONNECT_BACKOFF_MS_CONFIG, "250");
+        cfg.putIfAbsent(ConsumerConfig.RECONNECT_BACKOFF_MAX_MS_CONFIG, "10000");
+        cfg.putIfAbsent(ConsumerConfig.RETRY_BACKOFF_MS_CONFIG, "250");
+        cfg.putIfAbsent(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+
+        if (isAvro()) {
+            cfg.put("schema.registry.url", props.getSchemaRegistryUrl());
+            cfg.put("specific.avro.reader", "true");
+            cfg.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, io.confluent.kafka.serializers.KafkaAvroDeserializer.class.getName());
+            KafkaUtil.setSchemaRegistrySsl(cfg, props);
+        } else {
+            cfg.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, org.apache.kafka.common.serialization.StringDeserializer.class.getName());
+        }
+
+        KafkaUtil.setBrokerSsl(cfg, props);
+
+        cfg.put("enable.metrics.push", String.valueOf(ann.enableMetricPush()));
+        return cfg;
+    }
+
+    private boolean isAvro() {
+        return "avro".equalsIgnoreCase(props.getMessageFormat());
+    }
+
+    private boolean isDlqEnabled() {
+        return props.getDlq() != null && Boolean.TRUE.equals(props.getDlq().isEnabled());
+    }
+
+    private String resolveDlqTopic(String sourceTopic) {
+        String override = props.getDlq() == null ? null : props.getDlq().getTopicOverride();
+        if (override != null && !override.isBlank()) return override;
+        return sourceTopic + "-dlq";
+    }
+
+    private String toJson(org.apache.avro.specific.SpecificRecord record) throws java.io.IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        org.apache.avro.io.DatumWriter<org.apache.avro.specific.SpecificRecord> writer =
+                new org.apache.avro.specific.SpecificDatumWriter<>(record.getSchema());
+        org.apache.avro.io.Encoder encoder =
+                org.apache.avro.io.EncoderFactory.get().jsonEncoder(record.getSchema(), out);
+        writer.write(record, encoder);
+        encoder.flush();
+        return out.toString(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private void sleepQuietly(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    public void stop() {
+        log.info("Stopping KafkaConsumerRunnerPartitionChunking");
+        running.set(false);
+
+        for (KafkaConsumer<String, Object> c : activeConsumers) {
+            try { c.wakeup(); } catch (Exception ignore) {}
+        }
+
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            executor.shutdownNow();
+        }
+
+        log.info("KafkaConsumerRunnerPartitionChunking stopped");
+    }
+
+    // =========================
+    // Internal buffer per partition
+    // =========================
+    private static final class PartitionBuffer {
+        private final int chunkSize;
+        private final ArrayDeque<ConsumerRecord<String, Object>> queue;
+        private Instant lastAppendTime;
+
+        private PartitionBuffer(int chunkSize) {
+            this.chunkSize = chunkSize;
+            this.queue = new ArrayDeque<>(chunkSize);
+            this.lastAppendTime = Instant.now();
+        }
+
+        void add(ConsumerRecord<String, Object> rec) {
+            queue.addLast(rec);
+            lastAppendTime = Instant.now();
+        }
+
+        boolean isFull() {
+            return queue.size() >= chunkSize;
+        }
+
+        boolean shouldFlush(Instant now, Duration flushTimeout) {
+            return !queue.isEmpty() && Duration.between(lastAppendTime, now).compareTo(flushTimeout) >= 0;
+        }
+
+        List<ConsumerRecord<String, Object>> drainChunk() {
+            int n = Math.min(chunkSize, queue.size());
+            List<ConsumerRecord<String, Object>> out = new ArrayList<>(n);
+            for (int i = 0; i < n; i++) {
+                out.add(queue.removeFirst());
+            }
+            return out;
+        }
+
+        List<ConsumerRecord<String, Object>> drainAll() {
+            List<ConsumerRecord<String, Object>> out = new ArrayList<>(queue.size());
+            while (!queue.isEmpty()) {
+                out.add(queue.removeFirst());
+            }
+            return out;
+        }
     }
 }
