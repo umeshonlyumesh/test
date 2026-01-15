@@ -1,56 +1,42 @@
-package com.truist.core.config;
+package com.truist.core.common.logging;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.annotation.PostConstruct;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.stereotype.Component;
+public final class LogSanitizer {
 
-import java.io.InputStream;
-import java.util.Map;
-import java.util.Optional;
+    private static final int MAX_LEN = 8000;
 
-@Component
-public class CountryCodeLookup {
+    private LogSanitizer() {}
 
-    private static final String FILE_PATH =
-            "config/country-codes-reversed.json";
+    public static String sanitize(String input) {
+        if (input == null) return null;
 
-    private final ObjectMapper objectMapper;
-    private Map<String, String> alpha3ToAlpha2;
+        // cap size to avoid log flooding
+        String s = input.length() > MAX_LEN ? input.substring(0, MAX_LEN) + "..." : input;
 
-    public CountryCodeLookup(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
-    }
+        StringBuilder out = new StringBuilder(s.length() + 32);
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '\r' -> out.append("\\r");
+                case '\n' -> out.append("\\n");
+                case '\t' -> out.append("\\t");
+                case '\f' -> out.append("\\f");
+                case '\b' -> out.append("\\b");
 
-    @PostConstruct
-    void init() {
-        try (InputStream is =
-                     new ClassPathResource(FILE_PATH).getInputStream()) {
+                // Unicode line separators (often missed)
+                case '\u2028' -> out.append("\\u2028");
+                case '\u2029' -> out.append("\\u2029");
+                case '\u0085' -> out.append("\\u0085");
 
-            this.alpha3ToAlpha2 = Map.copyOf(
-                    objectMapper.readValue(
-                            is,
-                            new TypeReference<Map<String, String>>() {}
-                    )
-            );
-
-        } catch (Exception e) {
-            throw new IllegalStateException(
-                    "Failed to load country-codes-reversed.json", e);
+                default -> {
+                    // Escape other control chars (0x00-0x1F, 0x7F-0x9F)
+                    if ((c <= 0x1F) || (c >= 0x7F && c <= 0x9F)) {
+                        out.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        out.append(c);
+                    }
+                }
+            }
         }
-    }
-
-    /** Example: NZL → NZ */
-    public Optional<String> toAlpha2(String alpha3) {
-        return Optional.ofNullable(alpha3ToAlpha2.get(alpha3));
-    }
-
-    public boolean isValidAlpha3(String alpha3) {
-        return alpha3ToAlpha2.containsKey(alpha3);
-    }
-
-    public Map<String, String> getAll() {
-        return alpha3ToAlpha2;
+        return out.toString();
     }
 }
