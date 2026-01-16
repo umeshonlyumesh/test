@@ -1,24 +1,77 @@
 import javax.xml.datatype.DatatypeFactory;
-import javax.xml.datatype.XMLGregorianCalendar;
-import java.time.OffsetDateTime;
-import java.time.ZoneId;
+import java.time.*;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoField;
 import java.util.GregorianCalendar;
+import java.util.List;
+import java.util.Locale;
 
-public static String normalize(String input) {
-    if (input == null || input.isBlank()) return "";
+public class DateFormatNormalizer {
 
-    input = input.trim();
+    // Matches your inputs:
+    // 1) yyyy-MM-dd HH:mm:ss.SSS
+    // 2) M/d/yyyy
+    // 3) yyyy-MM-dd'T'HH:mm:ss.SSSXXX   (offset like -05:00)
+    // 4) yyyy-MM-dd'T'HH:mm:ss.SSSX     (offset like -0500 or Z)
+    // 5) yyyy-MM-dd HH:mm:ss.SSS        (duplicate in your list)
+    // 6) yyyy-MM-dd'T'HH:mm:ss.[fraction up to 9 digits]XXX  (nanos + offset)
+    private static final List<DateTimeFormatter> FORMATTERS = List.of(
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS", Locale.US),
 
-    try {
-        // Parses: 2026-01-16T10:11:54.848284788-05:00
-        OffsetDateTime odt = OffsetDateTime.parse(input); // ISO_OFFSET_DATE_TIME
+            DateTimeFormatter.ofPattern("M/d/yyyy", Locale.US),
 
-        GregorianCalendar gc = GregorianCalendar.from(odt.atZoneSameInstant(ZoneId.of("UTC"))); // or keep same offset
-        XMLGregorianCalendar xcal = DatatypeFactory.newInstance().newXMLGregorianCalendar(gc);
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US),
 
-        return xcal.toXMLFormat();
-    } catch (Exception e) {
-        // try other formats if you want (yyyy-MM-dd, M/d/yyyy, etc.)
-        return "";
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX", Locale.US),
+
+            // Nanos (1-9 digits) + offset -05:00 / Z
+            new DateTimeFormatterBuilder()
+                    .appendPattern("yyyy-MM-dd'T'HH:mm:ss")
+                    .optionalStart()
+                    .appendFraction(ChronoField.NANO_OF_SECOND, 1, 9, true)
+                    .optionalEnd()
+                    .appendOffsetId() // parses -05:00 or Z
+                    .toFormatter(Locale.US)
+    );
+
+    public static String normalize(String input) {
+        if (input == null || input.isBlank()) return "";
+        input = input.trim();
+
+        // 1) Try offset date-times first (best for your example)
+        for (DateTimeFormatter f : FORMATTERS) {
+            // Try OffsetDateTime
+            try {
+                OffsetDateTime odt = OffsetDateTime.parse(input, f);
+                return toXml(odt.toZonedDateTime()); // keeps offset
+            } catch (DateTimeParseException ignored) { }
+
+            // Try LocalDateTime
+            try {
+                LocalDateTime ldt = LocalDateTime.parse(input, f);
+                // If there is no offset/zone in input, you must choose one.
+                // Here: system default. You can change to ZoneId.of("America/New_York") if needed.
+                return toXml(ldt.atZone(ZoneId.systemDefault()));
+            } catch (DateTimeParseException ignored) { }
+
+            // Try LocalDate (like M/d/yyyy)
+            try {
+                LocalDate ld = LocalDate.parse(input, f);
+                return toXml(ld.atStartOfDay(ZoneId.systemDefault()));
+            } catch (DateTimeParseException ignored) { }
+        }
+
+        return ""; // or throw IllegalArgumentException("Unsupported date format: " + input);
+    }
+
+    private static String toXml(ZonedDateTime zdt) {
+        try {
+            GregorianCalendar gc = GregorianCalendar.from(zdt);
+            return DatatypeFactory.newInstance().newXMLGregorianCalendar(gc).toXMLFormat();
+        } catch (Exception e) {
+            return "";
+        }
     }
 }
