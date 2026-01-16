@@ -1,153 +1,24 @@
-{
-  "type": "record",
-  "name": "Transaction",
-  "namespace": "com.bank.payment.avro",
-  "fields": [
+import javax.xml.datatype.DatatypeFactory;
+import javax.xml.datatype.XMLGregorianCalendar;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.util.GregorianCalendar;
 
-    { "name": "endToEndId", "type": "string" },
-    { "name": "transactionId", "type": "string" },
-    { "name": "version", "type": "int" },
-    { "name": "instructionId", "type": "string" },
-    { "name": "uid", "type": "string" },
-    { "name": "lob", "type": "string" },
-    { "name": "channelId", "type": "string" },
-    { "name": "channelSubId", "type": "string" },
-    { "name": "entity", "type": "int" },
+public static String normalize(String input) {
+    if (input == null || input.isBlank()) return "";
 
-    { "name": "transactionType", "type": "string" },
-    { "name": "transactionCategory", "type": "string" },
+    input = input.trim();
 
-    { "name": "initiatorCif", "type": "string" },
-    { "name": "initiatorName", "type": "string" },
+    try {
+        // Parses: 2026-01-16T10:11:54.848284788-05:00
+        OffsetDateTime odt = OffsetDateTime.parse(input); // ISO_OFFSET_DATE_TIME
 
-    {
-      "name": "initiatorAddress",
-      "type": {
-        "type": "record",
-        "name": "InitiatorAddress",
-        "fields": [
-          { "name": "addressType", "type": "string" },
-          { "name": "address1", "type": "string" },
-          { "name": "address2", "type": "string" },
-          { "name": "street", "type": "string" },
-          { "name": "buildingNumber", "type": "string" },
-          { "name": "postalCode", "type": "string" },
-          { "name": "townName", "type": "string" },
-          { "name": "state", "type": "string" },
-          { "name": "country", "type": "string" },
-          { "name": "prefix", "type": "string" },
-          { "name": "phoneNumber", "type": "string" },
-          { "name": "mobileNumber", "type": "string" },
-          { "name": "faxNumber", "type": "string" }
-        ]
-      }
-    },
+        GregorianCalendar gc = GregorianCalendar.from(odt.atZoneSameInstant(ZoneId.of("UTC"))); // or keep same offset
+        XMLGregorianCalendar xcal = DatatypeFactory.newInstance().newXMLGregorianCalendar(gc);
 
-    { "name": "creditorAccountNumber", "type": "string" },
-    { "name": "creditorAccountType", "type": "string" },
-    { "name": "creditorAccountName", "type": "string" },
-    { "name": "creditorMop", "type": "string" },
-    { "name": "creditorCurrency", "type": "string" },
-
-    {
-      "name": "creditorAddress",
-      "type": {
-        "type": "record",
-        "name": "CreditorAddress",
-        "fields": [
-          { "name": "addressType", "type": "string" },
-          { "name": "address1", "type": "string" },
-          { "name": "address2", "type": "string" },
-          { "name": "street", "type": "string" },
-          { "name": "buildingNumber", "type": "string" },
-          { "name": "postalCode", "type": "string" },
-          { "name": "townName", "type": "string" },
-          { "name": "state", "type": "string" },
-          { "name": "country", "type": "string" },
-          { "name": "prefix", "type": "string" },
-          { "name": "phoneNumber", "type": "string" },
-          { "name": "mobileNumber", "type": "string" },
-          { "name": "faxNumber", "type": "string" }
-        ]
-      }
-    },
-
-    { "name": "creditorAccountNumberSearch", "type": "string" },
-
-    { "name": "debtorAccountNumber", "type": "string" },
-    { "name": "debtorAccountType", "type": "string" },
-    { "name": "debtorAccountName", "type": "string" },
-    { "name": "debtorMop", "type": "string" },
-    { "name": "debtorCurrency", "type": "string" },
-
-    {
-      "name": "debtorAddress",
-      "type": {
-        "type": "record",
-        "name": "DebtorAddress",
-        "fields": [
-          { "name": "addressType", "type": "string" },
-          { "name": "address1", "type": "string" },
-          { "name": "address2", "type": "string" },
-          { "name": "street", "type": "string" },
-          { "name": "buildingNumber", "type": "string" },
-          { "name": "postalCode", "type": "string" },
-          { "name": "townName", "type": "string" },
-          { "name": "state", "type": "string" },
-          { "name": "country", "type": "string" },
-          { "name": "prefix", "type": "string" },
-          { "name": "phoneNumber", "type": "string" },
-          { "name": "mobileNumber", "type": "string" },
-          { "name": "faxNumber", "type": "string" }
-        ]
-      }
-    },
-
-    { "name": "frequencyType", "type": "string" },
-    { "name": "amount", "type": "double" },
-    { "name": "insAmount", "type": "double" },
-
-    { "name": "executionDate", "type": "string" },
-    { "name": "settlementDate", "type": "string" },
-
-    { "name": "purpose", "type": "string" },
-    { "name": "paymentType", "type": "string" },
-    { "name": "amountType", "type": "string" },
-
-    { "name": "status", "type": "string" },
-    { "name": "state", "type": "string" },
-    { "name": "businessStatus", "type": "string" },
-
-    { "name": "direction", "type": "string" },
-    { "name": "unverifiedFundFlag", "type": "boolean" },
-
-    {
-      "name": "transactionAmount",
-      "type": [
-        "null",
-        {
-          "type": "array",
-          "items": {
-            "type": "record",
-            "name": "TransactionAmount",
-            "fields": [
-              { "name": "code", "type": "string" },
-              { "name": "value", "type": "string" }
-            ]
-          }
-        }
-      ],
-      "default": null
-    },
-
-    { "name": "rejectReasonCode", "type": "string" },
-    { "name": "rejectReason", "type": "string" },
-
-    { "name": "createdTimestamp", "type": "string" },
-    { "name": "updatedTimestamp", "type": "string" },
-    { "name": "createdBy", "type": "string" },
-    { "name": "updatedBy", "type": "string" },
-
-    { "name": "addenda", "type": "string" }
-  ]
+        return xcal.toXMLFormat();
+    } catch (Exception e) {
+        // try other formats if you want (yyyy-MM-dd, M/d/yyyy, etc.)
+        return "";
+    }
 }
