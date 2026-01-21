@@ -1,44 +1,217 @@
 {
   "type": "record",
-  "name": "CustomerAlertEvent",
+  "name": "PeZelleEvent",
   "namespace": "com.yourcompany.pe.zelle",
   "fields": [
     {
       "name": "header",
-      "type": {
-        "type": "record",
-        "name": "Header",
-        "fields": [
-          { "name": "sourceId", "type": "string" },
-          { "name": "operation", "type": "string" },
-          { "name": "requestId", "type": "string" },
-          { "name": "timestamp", "type": "string" }
-        ]
-      }
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "Header",
+          "fields": [
+            { "name": "sourceId", "type": ["null", "string"], "default": null },
+            { "name": "operation", "type": ["null", "string"], "default": null },
+            { "name": "requestId", "type": ["null", "string"], "default": null },
+            { "name": "timestamp", "type": ["null", "string"], "default": null }
+          ]
+        }
+      ],
+      "default": null
     },
+
+    {
+      "name": "paymentInfo",
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "PaymentInfo",
+          "fields": [
+            { "name": "uetr", "type": ["null", "string"], "default": null },
+            { "name": "transactionId", "type": ["null", "string"], "default": null },
+            { "name": "userID", "type": ["null", "string"], "default": null },
+            { "name": "partyId", "type": ["null", "string"], "default": null },
+            { "name": "partyIdType", "type": ["null", "string"], "default": null },
+
+            { "name": "amount", "type": ["null", "string"], "default": null },
+            { "name": "amountType", "type": ["null", "string"], "default": null },
+            { "name": "currency", "type": ["null", "string"], "default": null },
+
+            { "name": "debitAccountNumber", "type": ["null", "string"], "default": null },
+            { "name": "debitAccountNumberType", "type": ["null", "string"], "default": null },
+            { "name": "debitBankId", "type": ["null", "string"], "default": null },
+            { "name": "debitBankIdType", "type": ["null", "string"], "default": null },
+
+            { "name": "debtorFirstName", "type": ["null", "string"], "default": null },
+            { "name": "debtorMiddleName", "type": ["null", "string"], "default": null },
+            { "name": "debtorLastName", "type": ["null", "string"], "default": null },
+
+            { "name": "creditAccountNumber", "type": ["null", "string"], "default": null },
+            { "name": "creditAccountNumberType", "type": ["null", "string"], "default": null },
+            { "name": "creditBankId", "type": ["null", "string"], "default": null },
+            { "name": "creditBankIdType", "type": ["null", "string"], "default": null },
+
+            { "name": "creditorFirstName", "type": ["null", "string"], "default": null },
+            { "name": "creditorMiddleName", "type": ["null", "string"], "default": null },
+            { "name": "creditorLastName", "type": ["null", "string"], "default": null },
+
+            { "name": "methodOfPayment", "type": ["null", "string"], "default": null },
+            { "name": "source", "type": ["null", "string"], "default": null },
+            { "name": "department", "type": ["null", "string"], "default": null },
+
+            { "name": "settlementDate", "type": ["null", "string"], "default": null },
+            { "name": "memo", "type": ["null", "string"], "default": null },
+            { "name": "state", "type": ["null", "string"], "default": null },
+            { "name": "frequency", "type": ["null", "string"], "default": null }
+          ]
+        }
+      ],
+      "default": null
+    },
+
+    {
+      "name": "memoPost",
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "MemoPost",
+          "fields": [
+            { "name": "side", "type": ["null", "string"], "default": null },
+            { "name": "tranReference", "type": ["null", "string"], "default": null },
+            { "name": "description1", "type": ["null", "string"], "default": null },
+            { "name": "description2", "type": ["null", "string"], "default": null },
+            { "name": "debitTranCode", "type": ["null", "string"], "default": null },
+            { "name": "creditTranCode", "type": ["null", "string"], "default": null }
+          ]
+        }
+      ],
+      "default": null
+    },
+
+    {
+      "name": "qualification",
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "Qualification",
+          "fields": [
+            {
+              "name": "accountValidation",
+              "type": [
+                "null",
+                {
+                  "type": "record",
+                  "name": "AccountValidation",
+                  "fields": [
+                    { "name": "side", "type": ["null", "string"], "default": null }
+                  ]
+                }
+              ],
+              "default": null
+            },
+            {
+              "name": "balanceInquiry",
+              "type": [
+                "null",
+                {
+                  "type": "record",
+                  "name": "BalanceInquiry",
+                  "fields": [
+                    { "name": "side", "type": ["null", "string"], "default": null }
+                  ]
+                }
+              ],
+              "default": null
+            },
+            {
+              "name": "enrichment",
+              "type": [
+                "null",
+                {
+                  "type": "record",
+                  "name": "Enrichment",
+                  "fields": [
+                    { "name": "side", "type": ["null", "string"], "default": null },
+                    { "name": "inquiryLevel", "type": ["null", "string"], "default": null }
+                  ]
+                }
+              ],
+              "default": null
+            }
+          ]
+        }
+      ],
+      "default": null
+    },
+
+    {
+      "name": "fraudCheck",
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "FraudCheck",
+          "fields": [
+            { "name": "type", "type": ["null", "string"], "default": null },
+            {
+              "name": "parameters",
+              "type": [
+                "null",
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "record",
+                    "name": "FraudParameter",
+                    "fields": [
+                      { "name": "fieldId", "type": ["null", "string"], "default": null },
+                      { "name": "fieldValue", "type": ["null", "string"], "default": null }
+                    ]
+                  }
+                }
+              ],
+              "default": null
+            }
+          ]
+        }
+      ],
+      "default": null
+    },
+
     {
       "name": "customerAlert",
-      "type": {
-        "type": "record",
-        "name": "CustomerAlert",
-        "fields": [
-          { "name": "type", "type": "string" },
-          {
-            "name": "parameters",
-            "type": {
-              "type": "array",
-              "items": {
-                "type": "record",
-                "name": "Parameter",
-                "fields": [
-                  { "name": "fieldId", "type": "string" },
-                  { "name": "fieldValue", "type": "string" }
-                ]
-              }
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "CustomerAlert",
+          "fields": [
+            { "name": "type", "type": ["null", "string"], "default": null },
+            {
+              "name": "parameters",
+              "type": [
+                "null",
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "record",
+                    "name": "AlertParameter",
+                    "fields": [
+                      { "name": "fieldId", "type": ["null", "string"], "default": null },
+                      { "name": "fieldValue", "type": ["null", "string"], "default": null }
+                    ]
+                  }
+                }
+              ],
+              "default": null
             }
-          }
-        ]
-      }
+          ]
+        }
+      ],
+      "default": null
     }
   ]
 }
