@@ -1,217 +1,219 @@
-{
-  "type": "record",
-  "name": "PeZelleEvent",
-  "namespace": "com.yourcompany.pe.zelle",
-  "fields": [
-    {
-      "name": "header",
-      "type": [
-        "null",
-        {
-          "type": "record",
-          "name": "Header",
-          "fields": [
-            { "name": "sourceId", "type": ["null", "string"], "default": null },
-            { "name": "operation", "type": ["null", "string"], "default": null },
-            { "name": "requestId", "type": ["null", "string"], "default": null },
-            { "name": "timestamp", "type": ["null", "string"], "default": null }
-          ]
-        }
-      ],
-      "default": null
-    },
+package com.truist.cps.kafka.dlq;
 
-    {
-      "name": "paymentInfo",
-      "type": [
-        "null",
-        {
-          "type": "record",
-          "name": "PaymentInfo",
-          "fields": [
-            { "name": "uetr", "type": ["null", "string"], "default": null },
-            { "name": "transactionId", "type": ["null", "string"], "default": null },
-            { "name": "userID", "type": ["null", "string"], "default": null },
-            { "name": "partyId", "type": ["null", "string"], "default": null },
-            { "name": "partyIdType", "type": ["null", "string"], "default": null },
+import java.time.Instant;
 
-            { "name": "amount", "type": ["null", "string"], "default": null },
-            { "name": "amountType", "type": ["null", "string"], "default": null },
-            { "name": "currency", "type": ["null", "string"], "default": null },
+/**
+ * Envelope stored in DLQ topic so you retain original context.
+ * value/payload can be Avro GenericRecord or SpecificRecord.
+ */
+public record DlqEnvelope(
+    String originalTopic,
+    int originalPartition,
+    long originalOffset,
+    String originalKey,
+    String errorClass,
+    String errorMessage,
+    Instant failedAt,
+    Object payload
+) {}
 
-            { "name": "debitAccountNumber", "type": ["null", "string"], "default": null },
-            { "name": "debitAccountNumberType", "type": ["null", "string"], "default": null },
-            { "name": "debitBankId", "type": ["null", "string"], "default": null },
-            { "name": "debitBankIdType", "type": ["null", "string"], "default": null },
 
-            { "name": "debtorFirstName", "type": ["null", "string"], "default": null },
-            { "name": "debtorMiddleName", "type": ["null", "string"], "default": null },
-            { "name": "debtorLastName", "type": ["null", "string"], "default": null },
+package com.truist.cps.kafka.dlq;
 
-            { "name": "creditAccountNumber", "type": ["null", "string"], "default": null },
-            { "name": "creditAccountNumberType", "type": ["null", "string"], "default": null },
-            { "name": "creditBankId", "type": ["null", "string"], "default": null },
-            { "name": "creditBankIdType", "type": ["null", "string"], "default": null },
+import com.truist.cps.kafka.consumer.RobustKafkaConsumer;
+import com.truist.cps.kafka.producer.KafkaProducerClient;  // <-- your existing client
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 
-            { "name": "creditorFirstName", "type": ["null", "string"], "default": null },
-            { "name": "creditorMiddleName", "type": ["null", "string"], "default": null },
-            { "name": "creditorLastName", "type": ["null", "string"], "default": null },
+import java.time.Instant;
 
-            { "name": "methodOfPayment", "type": ["null", "string"], "default": null },
-            { "name": "source", "type": ["null", "string"], "default": null },
-            { "name": "department", "type": ["null", "string"], "default": null },
+public class KafkaDlqPublisher<V> implements RobustKafkaConsumer.DlqPublisher<V> {
 
-            { "name": "settlementDate", "type": ["null", "string"], "default": null },
-            { "name": "memo", "type": ["null", "string"], "default": null },
-            { "name": "state", "type": ["null", "string"], "default": null },
-            { "name": "frequency", "type": ["null", "string"], "default": null }
-          ]
-        }
-      ],
-      "default": null
-    },
+  private final KafkaProducerClient producerClient;
+  private final String dlqTopic;
 
-    {
-      "name": "memoPost",
-      "type": [
-        "null",
-        {
-          "type": "record",
-          "name": "MemoPost",
-          "fields": [
-            { "name": "side", "type": ["null", "string"], "default": null },
-            { "name": "tranReference", "type": ["null", "string"], "default": null },
-            { "name": "description1", "type": ["null", "string"], "default": null },
-            { "name": "description2", "type": ["null", "string"], "default": null },
-            { "name": "debitTranCode", "type": ["null", "string"], "default": null },
-            { "name": "creditTranCode", "type": ["null", "string"], "default": null }
-          ]
-        }
-      ],
-      "default": null
-    },
+  public KafkaDlqPublisher(KafkaProducerClient producerClient, String dlqTopic) {
+    this.producerClient = producerClient;
+    this.dlqTopic = dlqTopic;
+  }
 
-    {
-      "name": "qualification",
-      "type": [
-        "null",
-        {
-          "type": "record",
-          "name": "Qualification",
-          "fields": [
-            {
-              "name": "accountValidation",
-              "type": [
-                "null",
-                {
-                  "type": "record",
-                  "name": "AccountValidation",
-                  "fields": [
-                    { "name": "side", "type": ["null", "string"], "default": null }
-                  ]
-                }
-              ],
-              "default": null
-            },
-            {
-              "name": "balanceInquiry",
-              "type": [
-                "null",
-                {
-                  "type": "record",
-                  "name": "BalanceInquiry",
-                  "fields": [
-                    { "name": "side", "type": ["null", "string"], "default": null }
-                  ]
-                }
-              ],
-              "default": null
-            },
-            {
-              "name": "enrichment",
-              "type": [
-                "null",
-                {
-                  "type": "record",
-                  "name": "Enrichment",
-                  "fields": [
-                    { "name": "side", "type": ["null", "string"], "default": null },
-                    { "name": "inquiryLevel", "type": ["null", "string"], "default": null }
-                  ]
-                }
-              ],
-              "default": null
-            }
-          ]
-        }
-      ],
-      "default": null
-    },
+  @Override
+  public void publish(ConsumerRecord<String, V> record, Exception cause) {
 
-    {
-      "name": "fraudCheck",
-      "type": [
-        "null",
-        {
-          "type": "record",
-          "name": "FraudCheck",
-          "fields": [
-            { "name": "type", "type": ["null", "string"], "default": null },
-            {
-              "name": "parameters",
-              "type": [
-                "null",
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "record",
-                    "name": "FraudParameter",
-                    "fields": [
-                      { "name": "fieldId", "type": ["null", "string"], "default": null },
-                      { "name": "fieldValue", "type": ["null", "string"], "default": null }
-                    ]
-                  }
-                }
-              ],
-              "default": null
-            }
-          ]
-        }
-      ],
-      "default": null
-    },
+    DlqEnvelope envelope = new DlqEnvelope(
+        record.topic(),
+        record.partition(),
+        record.offset(),
+        record.key(),
+        cause.getClass().getName(),
+        safeMessage(cause),
+        Instant.now(),
+        record.value()
+    );
 
-    {
-      "name": "customerAlert",
-      "type": [
-        "null",
-        {
-          "type": "record",
-          "name": "CustomerAlert",
-          "fields": [
-            { "name": "type", "type": ["null", "string"], "default": null },
-            {
-              "name": "parameters",
-              "type": [
-                "null",
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "record",
-                    "name": "AlertParameter",
-                    "fields": [
-                      { "name": "fieldId", "type": ["null", "string"], "default": null },
-                      { "name": "fieldValue", "type": ["null", "string"], "default": null }
-                    ]
-                  }
-                }
-              ],
-              "default": null
-            }
-          ]
-        }
-      ],
-      "default": null
+    // ✅ Most common producer API; adjust if your producerClient differs
+    producerClient.send(dlqTopic, record.key(), envelope);
+  }
+
+  private String safeMessage(Throwable t) {
+    String m = t.getMessage();
+    return (m == null) ? "" : m;
+  }
+}
+
+
+package com.truist.cps.kafka.consumer;
+
+import com.truist.cps.kafka.annotation.KafkaConsumerListener;
+import com.truist.cps.kafka.dlq.KafkaDlqPublisher;
+import com.truist.cps.kafka.producer.KafkaProducerClient;
+import com.truist.cps.kafka.serdes.SafeKafkaAvroDeserializer;
+import lombok.RequiredArgsConstructor;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.SmartLifecycle;
+import org.springframework.core.env.Environment;
+import org.springframework.util.ReflectionUtils;
+
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
+
+@RequiredArgsConstructor
+public class KafkaConsumerRunner implements SmartLifecycle {
+
+  private final ApplicationContext ctx;
+  private final Environment environment;
+  private final KafkaProducerClient producerClient; // ✅ you already have this in your codebase
+
+  private final List<RobustKafkaConsumer<Object>> consumers = new CopyOnWriteArrayList<>();
+  private volatile boolean running;
+
+  @Override
+  public void start() {
+    if (running) return;
+
+    // Discover all listener methods
+    for (String beanName : ctx.getBeanDefinitionNames()) {
+      Object bean = ctx.getBean(beanName);
+      scanBean(bean);
     }
-  ]
+
+    // Start consumers
+    consumers.forEach(RobustKafkaConsumer::start);
+    running = true;
+  }
+
+  @Override
+  public void stop() {
+    consumers.forEach(RobustKafkaConsumer::stop);
+    running = false;
+  }
+
+  @Override
+  public boolean isRunning() {
+    return running;
+  }
+
+  @Override public boolean isAutoStartup() { return true; }
+  @Override public int getPhase() { return 0; }
+  @Override public void stop(Runnable callback) { stop(); callback.run(); }
+
+  private void scanBean(Object bean) {
+    ReflectionUtils.doWithMethods(bean.getClass(), method -> {
+      KafkaConsumerListener ann = method.getAnnotation(KafkaConsumerListener.class);
+      if (ann == null) return;
+
+      validateListenerSignature(method);
+      method.setAccessible(true);
+
+      String topic = environment.resolvePlaceholders(ann.topic());
+      String groupId = environment.resolvePlaceholders(ann.groupId());
+
+      int maxRetries = Integer.parseInt(environment.getProperty("robust.max.retries", "3"));
+      long pollTimeoutMs = Long.parseLong(environment.getProperty("robust.poll.timeout.ms", "1000"));
+
+      // ✅ DLQ topic: per service OR default per-topic
+      String dlqTopic = environment.getProperty("robust.dlq.topic", topic + ".DLQ");
+
+      // Build consumer
+      Properties props = buildConsumerProps(groupId);
+      KafkaConsumer<String, Object> kc = new KafkaConsumer<>(props);
+
+      // ✅ Real DLQ publisher
+      KafkaDlqPublisher<Object> dlqPublisher = new KafkaDlqPublisher<>(producerClient, dlqTopic);
+
+      // Robust consumer instance
+      RobustKafkaConsumer<Object> rc = new RobustKafkaConsumer<>(
+          kc,
+          topic,
+          (ConsumerRecord<String, Object> rec) -> invokeListener(bean, method, rec),
+          dlqPublisher,
+          maxRetries,
+          pollTimeoutMs
+      );
+
+      consumers.add(rc);
+
+    }, m -> m.isAnnotationPresent(KafkaConsumerListener.class));
+  }
+
+  private void invokeListener(Object bean, Method method, ConsumerRecord<String, Object> rec) throws Exception {
+    try {
+      method.invoke(bean, rec);
+    } catch (InvocationTargetException ite) {
+      // ✅ unwrap business exception
+      Throwable real = ite.getTargetException();
+      if (real instanceof Exception e) throw e;
+      throw new RuntimeException(real);
+    } catch (IllegalAccessException iae) {
+      throw new RuntimeException("Cannot access listener method: " + method, iae);
+    }
+  }
+
+  private void validateListenerSignature(Method method) {
+    if (method.getParameterCount() != 1 ||
+        !ConsumerRecord.class.isAssignableFrom(method.getParameterTypes()[0])) {
+      throw new IllegalStateException(
+          "@KafkaConsumerListener method must have exactly 1 parameter of type ConsumerRecord: " + method
+      );
+    }
+  }
+
+  private Properties buildConsumerProps(String groupId) {
+    Properties props = new Properties();
+
+    props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG,
+        environment.getProperty("kafka.bootstrap.servers", "localhost:9092"));
+    props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
+    props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+    props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG,
+        environment.getProperty("kafka.auto.offset.reset", "earliest"));
+
+    // Key: String
+    props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+
+    // Value: Safe Avro -> returns null on deserialize failure (bad payload)
+    props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, SafeKafkaAvroDeserializer.class.getName());
+
+    props.put("schema.registry.url",
+        environment.getProperty("kafka.schema.registry.url", "http://localhost:8081"));
+    props.put("specific.avro.reader",
+        environment.getProperty("kafka.specific.avro.reader", "true"));
+
+    putIfPresent(props, ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "kafka.max.poll.records");
+    putIfPresent(props, ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, "kafka.max.poll.interval.ms");
+    putIfPresent(props, ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, "kafka.session.timeout.ms");
+    putIfPresent(props, ConsumerConfig.HEARTBEAT_INTERVAL_MS_CONFIG, "kafka.heartbeat.interval.ms");
+
+    return props;
+  }
+
+  private void putIfPresent(Properties props, String kafkaKey, String propertyKey) {
+    String v = environment.getProperty(propertyKey);
+    if (v != null && !v.isBlank()) props.put(kafkaKey, v);
+  }
 }
