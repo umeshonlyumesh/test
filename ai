@@ -1,219 +1,76 @@
-package com.truist.cps.kafka.dlq;
-
-import java.time.Instant;
-
-/**
- * Envelope stored in DLQ topic so you retain original context.
- * value/payload can be Avro GenericRecord or SpecificRecord.
- */
-public record DlqEnvelope(
-    String originalTopic,
-    int originalPartition,
-    long originalOffset,
-    String originalKey,
-    String errorClass,
-    String errorMessage,
-    Instant failedAt,
-    Object payload
-) {}
-
-
-package com.truist.cps.kafka.dlq;
-
-import com.truist.cps.kafka.consumer.RobustKafkaConsumer;
-import com.truist.cps.kafka.producer.KafkaProducerClient;  // <-- your existing client
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-
-import java.time.Instant;
-
-public class KafkaDlqPublisher<V> implements RobustKafkaConsumer.DlqPublisher<V> {
-
-  private final KafkaProducerClient producerClient;
-  private final String dlqTopic;
-
-  public KafkaDlqPublisher(KafkaProducerClient producerClient, String dlqTopic) {
-    this.producerClient = producerClient;
-    this.dlqTopic = dlqTopic;
-  }
-
-  @Override
-  public void publish(ConsumerRecord<String, V> record, Exception cause) {
-
-    DlqEnvelope envelope = new DlqEnvelope(
-        record.topic(),
-        record.partition(),
-        record.offset(),
-        record.key(),
-        cause.getClass().getName(),
-        safeMessage(cause),
-        Instant.now(),
-        record.value()
-    );
-
-    // ✅ Most common producer API; adjust if your producerClient differs
-    producerClient.send(dlqTopic, record.key(), envelope);
-  }
-
-  private String safeMessage(Throwable t) {
-    String m = t.getMessage();
-    return (m == null) ? "" : m;
-  }
-}
-
-
-package com.truist.cps.kafka.consumer;
-
-import com.truist.cps.kafka.annotation.KafkaConsumerListener;
-import com.truist.cps.kafka.dlq.KafkaDlqPublisher;
-import com.truist.cps.kafka.producer.KafkaProducerClient;
-import com.truist.cps.kafka.serdes.SafeKafkaAvroDeserializer;
-import lombok.RequiredArgsConstructor;
-import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
-import org.apache.kafka.common.serialization.StringDeserializer;
-import org.springframework.context.ApplicationContext;
-import org.springframework.context.SmartLifecycle;
-import org.springframework.core.env.Environment;
-import org.springframework.util.ReflectionUtils;
-
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.*;
-import java.util.concurrent.CopyOnWriteArrayList;
-
-@RequiredArgsConstructor
-public class KafkaConsumerRunner implements SmartLifecycle {
-
-  private final ApplicationContext ctx;
-  private final Environment environment;
-  private final KafkaProducerClient producerClient; // ✅ you already have this in your codebase
-
-  private final List<RobustKafkaConsumer<Object>> consumers = new CopyOnWriteArrayList<>();
-  private volatile boolean running;
-
-  @Override
-  public void start() {
-    if (running) return;
-
-    // Discover all listener methods
-    for (String beanName : ctx.getBeanDefinitionNames()) {
-      Object bean = ctx.getBean(beanName);
-      scanBean(bean);
+{
+  "type": "record",
+  "name": "CustomerAlertEvent",
+  "namespace": "com.pe.zelle.alert",
+  "fields": [
+    {
+      "name": "header",
+      "type": {
+        "type": "record",
+        "name": "Header",
+        "fields": [
+          {
+            "name": "sourceId",
+            "type": "string"
+          },
+          {
+            "name": "operation",
+            "type": {
+              "type": "enum",
+              "name": "OperationType",
+              "symbols": ["CustomerAlert"]
+            },
+            "doc": "Operation is always CustomerAlert"
+          },
+          {
+            "name": "requestId",
+            "type": "string"
+          },
+          {
+            "name": "timestamp",
+            "type": {
+              "type": "string",
+              "logicalType": "timestamp-iso8601"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "customerAlert",
+      "type": {
+        "type": "record",
+        "name": "CustomerAlert",
+        "fields": [
+          {
+            "name": "type",
+            "type": "string",
+            "doc": "Alert type. Must not be null."
+          },
+          {
+            "name": "parameters",
+            "type": {
+              "type": "array",
+              "items": {
+                "type": "record",
+                "name": "Parameter",
+                "fields": [
+                  {
+                    "name": "fieldId",
+                    "type": "string"
+                  },
+                  {
+                    "name": "fieldValue",
+                    "type": "string"
+                  }
+                ]
+              },
+              "minItems": 1
+            },
+            "doc": "Must contain at least one parameter"
+          }
+        ]
+      }
     }
-
-    // Start consumers
-    consumers.forEach(RobustKafkaConsumer::start);
-    running = true;
-  }
-
-  @Override
-  public void stop() {
-    consumers.forEach(RobustKafkaConsumer::stop);
-    running = false;
-  }
-
-  @Override
-  public boolean isRunning() {
-    return running;
-  }
-
-  @Override public boolean isAutoStartup() { return true; }
-  @Override public int getPhase() { return 0; }
-  @Override public void stop(Runnable callback) { stop(); callback.run(); }
-
-  private void scanBean(Object bean) {
-    ReflectionUtils.doWithMethods(bean.getClass(), method -> {
-      KafkaConsumerListener ann = method.getAnnotation(KafkaConsumerListener.class);
-      if (ann == null) return;
-
-      validateListenerSignature(method);
-      method.setAccessible(true);
-
-      String topic = environment.resolvePlaceholders(ann.topic());
-      String groupId = environment.resolvePlaceholders(ann.groupId());
-
-      int maxRetries = Integer.parseInt(environment.getProperty("robust.max.retries", "3"));
-      long pollTimeoutMs = Long.parseLong(environment.getProperty("robust.poll.timeout.ms", "1000"));
-
-      // ✅ DLQ topic: per service OR default per-topic
-      String dlqTopic = environment.getProperty("robust.dlq.topic", topic + ".DLQ");
-
-      // Build consumer
-      Properties props = buildConsumerProps(groupId);
-      KafkaConsumer<String, Object> kc = new KafkaConsumer<>(props);
-
-      // ✅ Real DLQ publisher
-      KafkaDlqPublisher<Object> dlqPublisher = new KafkaDlqPublisher<>(producerClient, dlqTopic);
-
-      // Robust consumer instance
-      RobustKafkaConsumer<Object> rc = new RobustKafkaConsumer<>(
-          kc,
-          topic,
-          (ConsumerRecord<String, Object> rec) -> invokeListener(bean, method, rec),
-          dlqPublisher,
-          maxRetries,
-          pollTimeoutMs
-      );
-
-      consumers.add(rc);
-
-    }, m -> m.isAnnotationPresent(KafkaConsumerListener.class));
-  }
-
-  private void invokeListener(Object bean, Method method, ConsumerRecord<String, Object> rec) throws Exception {
-    try {
-      method.invoke(bean, rec);
-    } catch (InvocationTargetException ite) {
-      // ✅ unwrap business exception
-      Throwable real = ite.getTargetException();
-      if (real instanceof Exception e) throw e;
-      throw new RuntimeException(real);
-    } catch (IllegalAccessException iae) {
-      throw new RuntimeException("Cannot access listener method: " + method, iae);
-    }
-  }
-
-  private void validateListenerSignature(Method method) {
-    if (method.getParameterCount() != 1 ||
-        !ConsumerRecord.class.isAssignableFrom(method.getParameterTypes()[0])) {
-      throw new IllegalStateException(
-          "@KafkaConsumerListener method must have exactly 1 parameter of type ConsumerRecord: " + method
-      );
-    }
-  }
-
-  private Properties buildConsumerProps(String groupId) {
-    Properties props = new Properties();
-
-    props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG,
-        environment.getProperty("kafka.bootstrap.servers", "localhost:9092"));
-    props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
-    props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
-    props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG,
-        environment.getProperty("kafka.auto.offset.reset", "earliest"));
-
-    // Key: String
-    props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-
-    // Value: Safe Avro -> returns null on deserialize failure (bad payload)
-    props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, SafeKafkaAvroDeserializer.class.getName());
-
-    props.put("schema.registry.url",
-        environment.getProperty("kafka.schema.registry.url", "http://localhost:8081"));
-    props.put("specific.avro.reader",
-        environment.getProperty("kafka.specific.avro.reader", "true"));
-
-    putIfPresent(props, ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "kafka.max.poll.records");
-    putIfPresent(props, ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, "kafka.max.poll.interval.ms");
-    putIfPresent(props, ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, "kafka.session.timeout.ms");
-    putIfPresent(props, ConsumerConfig.HEARTBEAT_INTERVAL_MS_CONFIG, "kafka.heartbeat.interval.ms");
-
-    return props;
-  }
-
-  private void putIfPresent(Properties props, String kafkaKey, String propertyKey) {
-    String v = environment.getProperty(propertyKey);
-    if (v != null && !v.isBlank()) props.put(kafkaKey, v);
-  }
+  ]
 }
