@@ -1,51 +1,55 @@
-import java.time.DayOfWeek;
-import java.time.LocalTime;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
-public final class AmPmIndicator {
+import java.nio.charset.StandardCharsets;
 
-    private static final ZoneId ET = ZoneId.of("America/New_York");
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.common.header.Header;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
-    // Time windows from your Mule logic
-    private static final LocalTime MIDNIGHT_START = LocalTime.of(0, 0, 0, 0);
-    private static final LocalTime MIDNIGHT_END   = LocalTime.of(20, 59, 59, 999_000_000); // 20:59:59.999
+class YourTest {
 
-    private static final LocalTime BUS_START      = LocalTime.of(21, 0, 0, 0);             // 21:00:00.000
-    private static final LocalTime BUS_END        = LocalTime.of(23, 59, 59, 999_000_000); // 23:59:59.999
+  @Test
+  void shouldProcessValidTextMessageAndPublishToKafka() throws Exception {
+    // Arrange
+    String payload = "TXN1234||SOME_DATA|RELEASE";
+    when(textMessage.getText()).thenReturn(payload);
 
-    private AmPmIndicator() {}
+    RecordMetadata metadata = mock(RecordMetadata.class);
+    when(metadata.partition()).thenReturn(1);
+    when(metadata.offset()).thenReturn(10L);
 
-    /**
-     * Equivalent to Mule:
-     * amPmInd =
-     *   if (((isWeekday and isMidnight) or isWeekend)) 'A'
-     *   else if (isWeekday and isBusHours) 'P'
-     *   else ""
-     */
-    public static String computeAmPmIndNowEt() {
-        ZonedDateTime nowEt = ZonedDateTime.now(ET);
-        return computeAmPmInd(nowEt.toLocalTime(), nowEt.getDayOfWeek());
-    }
+    // IMPORTANT: stub the real signature (single ProducerRecord arg)
+    when(producer.sendSync(Mockito.<ProducerRecord<String, Object>>any()))
+        .thenReturn(metadata);
 
-    public static String computeAmPmInd(LocalTime currentTime, DayOfWeek dayOfWeek) {
-        boolean isWeekday = dayOfWeek != DayOfWeek.SATURDAY && dayOfWeek != DayOfWeek.SUNDAY;
+    // Act
+    service.onL2MessageEvent(textMessage);
 
-        boolean isMidnightWindow = isBetweenInclusive(currentTime, MIDNIGHT_START, MIDNIGHT_END);
-        boolean isBusHoursWindow = isBetweenInclusive(currentTime, BUS_START, BUS_END);
+    // Assert: capture the ProducerRecord passed to sendSync(...)
+    ArgumentCaptor<ProducerRecord<String, Object>> captor =
+        ArgumentCaptor.forClass((Class) ProducerRecord.class);
 
-        boolean isWeekend = (dayOfWeek == DayOfWeek.SATURDAY || dayOfWeek == DayOfWeek.SUNDAY)
-                && isBetweenInclusive(currentTime, MIDNIGHT_START, BUS_END);
+    verify(producer, times(1)).sendSync(captor.capture());
 
-        if ((isWeekday && isMidnightWindow) || isWeekend) {
-            return "A";
-        } else if (isWeekday && isBusHoursWindow) {
-            return "P";
-        }
-        return "";
-    }
+    ProducerRecord<String, Object> rec = captor.getValue();
 
-    private static boolean isBetweenInclusive(LocalTime t, LocalTime start, LocalTime end) {
-        return !t.isBefore(start) && !t.isAfter(end);
-    }
+    // key
+    assertEquals("TXN1234", rec.key());
+
+    // value type (adjust class name if your payload object differs)
+    assertNotNull(rec.value());
+    assertTrue(rec.value() instanceof L2);
+
+    // header
+    Header h = rec.headers().lastHeader("kafka_correlationId");
+    assertNotNull(h, "kafka_correlationId header must be present");
+    assertEquals("TXN1234", new String(h.value(), StandardCharsets.UTF_8));
+
+    // topic (if you know expected topic, assert it)
+    // assertEquals("your-topic", rec.topic());
+  }
 }
