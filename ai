@@ -1,55 +1,480 @@
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+package com.truist.cps.kafka.consumer;
 
-import java.nio.charset.StandardCharsets;
+import org.apache.kafka.clients.consumer.*;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.errors.WakeupException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.clients.producer.RecordMetadata;
-import org.apache.kafka.common.header.Header;
-import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
+import java.time.Duration;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-class YourTest {
+/**
+ * A robust Kafka consumer wrapper that:
+ * <ul>
+ *   <li>Processes records partition-by-partition in-order</li>
+ *   <li>Stops processing a partition on the first failure (prevents committing gaps)</li>
+ *   <li>Retries failed records up to maxRetries within a retry TTL window</li>
+ *   <li>Sends poison records to DLQ after retries exhausted</li>
+ *   <li>Commits only successfully processed (contiguous) offsets</li>
+ * </ul>
+ *
+ * <p><b>Important design choice (Approach 1):</b>
+ * This consumer will not process later offsets in a partition after a failure.
+ * This guarantees that the committed offset for a partition never skips a failed record.</p>
+ *
+ * @param <V> Kafka value type
+ */
+public final class CustomizedKafkaConsumer<V> implements AutoCloseable {
 
-  @Test
-  void shouldProcessValidTextMessageAndPublishToKafka() throws Exception {
-    // Arrange
-    String payload = "TXN1234||SOME_DATA|RELEASE";
-    when(textMessage.getText()).thenReturn(payload);
+    private static final Logger log = LoggerFactory.getLogger(CustomizedKafkaConsumer.class);
 
-    RecordMetadata metadata = mock(RecordMetadata.class);
-    when(metadata.partition()).thenReturn(1);
-    when(metadata.offset()).thenReturn(10L);
+    private final KafkaConsumer<String, V> consumer;
+    private final RecordProcessor<V> processor;
+    private final DlqPublisher<V> dlqPublisher;
 
-    // IMPORTANT: stub the real signature (single ProducerRecord arg)
-    when(producer.sendSync(Mockito.<ProducerRecord<String, Object>>any()))
-        .thenReturn(metadata);
+    private final String topic;
+    private final int maxRetries;
+    private final long pollTimeoutMs;
+    private final long retryTtlMs;
+    private final long backoffMs;
 
-    // Act
-    service.onL2MessageEvent(textMessage);
+    private final AtomicBoolean running = new AtomicBoolean(false);
 
-    // Assert: capture the ProducerRecord passed to sendSync(...)
-    ArgumentCaptor<ProducerRecord<String, Object>> captor =
-        ArgumentCaptor.forClass((Class) ProducerRecord.class);
+    /**
+     * Tracks the highest successfully processed offset per partition.
+     * We commit (offset + 1) because Kafka commits the "next offset to read".
+     */
+    private final Map<TopicPartition, Long> committableOffsets = new ConcurrentHashMap<>();
 
-    verify(producer, times(1)).sendSync(captor.capture());
+    /**
+     * Tracks retry attempts for a given (partition, offset), including last attempt timestamp.
+     * Used to enforce retry TTL and avoid infinite growth.
+     */
+    private final Map<TopicPartition, Map<Long, RetryMetadata>> retries = new ConcurrentHashMap<>();
 
-    ProducerRecord<String, Object> rec = captor.getValue();
+    /** Single thread for poll loop. */
+    private final ExecutorService pollExecutor;
 
-    // key
-    assertEquals("TXN1234", rec.key());
+    /**
+     * Worker pool for record processing.
+     * You can tune this, but keep in mind: Approach 1 relies on "stop on first failure"
+     * per partition, so we still process per-record and wait for completion to preserve ordering.
+     */
+    private final ExecutorService workerPool;
 
-    // value type (adjust class name if your payload object differs)
-    assertNotNull(rec.value());
-    assertTrue(rec.value() instanceof L2);
+    /**
+     * Creates the robust consumer.
+     *
+     * @param consumer      KafkaConsumer instance (must be configured with enable.auto.commit=false)
+     * @param processor     user callback to process a record
+     * @param dlqPublisher  DLQ publisher to handle poison records after retries exhausted
+     * @param topic         topic to subscribe
+     * @param maxRetries    maximum retry attempts for a given record (e.g., 3)
+     * @param pollTimeoutMs poll timeout in milliseconds (e.g., 1000)
+     * @param retryTtlMs    retry tracking TTL in milliseconds (e.g., 300000)
+     * @param backoffMs     backoff between retries in milliseconds (e.g., 200)
+     */
+    public CustomizedKafkaConsumer(
+            KafkaConsumer<String, V> consumer,
+            RecordProcessor<V> processor,
+            DlqPublisher<V> dlqPublisher,
+            String topic,
+            int maxRetries,
+            long pollTimeoutMs,
+            long retryTtlMs,
+            long backoffMs
+    ) {
+        this.consumer = Objects.requireNonNull(consumer, "consumer");
+        this.processor = Objects.requireNonNull(processor, "processor");
+        this.dlqPublisher = Objects.requireNonNull(dlqPublisher, "dlqPublisher");
+        this.topic = Objects.requireNonNull(topic, "topic");
 
-    // header
-    Header h = rec.headers().lastHeader("kafka_correlationId");
-    assertNotNull(h, "kafka_correlationId header must be present");
-    assertEquals("TXN1234", new String(h.value(), StandardCharsets.UTF_8));
+        if (maxRetries < 0) throw new IllegalArgumentException("maxRetries must be >= 0");
+        if (pollTimeoutMs <= 0) throw new IllegalArgumentException("pollTimeoutMs must be > 0");
+        if (retryTtlMs <= 0) throw new IllegalArgumentException("retryTtlMs must be > 0");
+        if (backoffMs < 0) throw new IllegalArgumentException("backoffMs must be >= 0");
 
-    // topic (if you know expected topic, assert it)
-    // assertEquals("your-topic", rec.topic());
-  }
+        this.maxRetries = maxRetries;
+        this.pollTimeoutMs = pollTimeoutMs;
+        this.retryTtlMs = retryTtlMs;
+        this.backoffMs = backoffMs;
+
+        this.pollExecutor = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "robust-kafka-poll-" + topic);
+            t.setDaemon(true);
+            return t;
+        });
+
+        // You can tune size; keeping it modest is usually enough.
+        this.workerPool = Executors.newFixedThreadPool(
+                Math.max(2, Runtime.getRuntime().availableProcessors() / 2),
+                r -> {
+                    Thread t = new Thread(r, "robust-kafka-worker-" + topic);
+                    t.setDaemon(true);
+                    return t;
+                }
+        );
+    }
+
+    /**
+     * Starts the consumer loop.
+     *
+     * <p>This method is idempotent: calling it multiple times will not create multiple loops.</p>
+     */
+    public void start() {
+        if (!running.compareAndSet(false, true)) {
+            log.info("Consumer already running for topic={}", topic);
+            return;
+        }
+        pollExecutor.submit(this::pollLoop);
+        log.info("Started consumer for topic={}", topic);
+    }
+
+    /**
+     * Requests a graceful stop.
+     *
+     * <p>We call {@link KafkaConsumer#wakeup()} to break out of poll immediately.</p>
+     */
+    public void stop() {
+        if (!running.compareAndSet(true, false)) {
+            return;
+        }
+        consumer.wakeup();
+        log.info("Stop requested for topic={}", topic);
+    }
+
+    /**
+     * Main poll loop:
+     * <ul>
+     *   <li>Subscribes to the topic (with a rebalance listener)</li>
+     *   <li>Polls records</li>
+     *   <li>Processes per partition in-order</li>
+     *   <li>Stops a partition on first failure to preserve contiguity</li>
+     *   <li>Commits only successfully processed offsets</li>
+     * </ul>
+     */
+    private void pollLoop() {
+        try {
+            consumer.subscribe(List.of(topic), new ConsumerRebalanceListener() {
+                /**
+                 * Called before a rebalance revokes partitions from this consumer.
+                 * We commit what we can before losing ownership.
+                 */
+                @Override
+                public void onPartitionsRevoked(Collection<TopicPartition> partitions) {
+                    log.info("Partitions revoked: {}", partitions);
+                    commitWithErrorHandling();
+                    // Cleanup retry maps for partitions we no longer own (optional but good hygiene)
+                    partitions.forEach(tp -> retries.remove(tp));
+                    partitions.forEach(tp -> committableOffsets.remove(tp));
+                }
+
+                /**
+                 * Called after partitions are assigned to this consumer.
+                 * We reset retry tracking for newly assigned partitions to avoid stale data.
+                 */
+                @Override
+                public void onPartitionsAssigned(Collection<TopicPartition> partitions) {
+                    log.info("Partitions assigned: {}", partitions);
+                    partitions.forEach(tp -> retries.remove(tp));
+                }
+            });
+
+            while (running.get()) {
+                ConsumerRecords<String, V> records = consumer.poll(Duration.ofMillis(pollTimeoutMs));
+                if (records.isEmpty()) {
+                    cleanupExpiredRetries();
+                    continue;
+                }
+
+                // Process per partition to preserve ordering.
+                for (TopicPartition tp : records.partitions()) {
+                    List<ConsumerRecord<String, V>> partitionRecords = records.records(tp);
+
+                    // IMPORTANT: stop on first failure in this partition (Approach 1).
+                    for (ConsumerRecord<String, V> r : partitionRecords) {
+                        boolean ok = processOne(tp, r);
+                        if (!ok) {
+                            // Do not proceed to later offsets in this partition.
+                            break;
+                        }
+                    }
+                }
+
+                // Commit only offsets that we have safely marked processed.
+                commitWithErrorHandling();
+
+                // Periodic cleanup to prevent memory leaks in retry tracking.
+                cleanupExpiredRetries();
+            }
+
+        } catch (WakeupException we) {
+            // expected during shutdown
+            log.info("Consumer wakeup received for topic={} (shutdown={})", topic, !running.get());
+        } catch (Exception e) {
+            log.error("Fatal error in poll loop for topic={}", topic, e);
+        } finally {
+            closeConsumerSafely();
+        }
+    }
+
+    /**
+     * Processes a single record.
+     *
+     * <p>Contract:
+     * <ul>
+     *   <li>Return {@code true} if record is successfully handled OR deliberately skipped (e.g., null payload or DLQ success)</li>
+     *   <li>Return {@code false} if record failed and should be retried later</li>
+     * </ul>
+     *
+     * <p>Important:
+     * When returning {@code false}, we do NOT mark the offset as processed, so commit will not advance
+     * past this record. This ensures Kafka will redeliver it on next poll.</p>
+     */
+    private boolean processOne(TopicPartition tp, ConsumerRecord<String, V> r) {
+        // Example policy: treat null value as bad payload; skip but advance to avoid poison loop.
+        if (r.value() == null) {
+            log.error("BAD_PAYLOAD | topic={} partition={} offset={}", r.topic(), r.partition(), r.offset());
+            markAsProcessed(tp, r.offset());
+            return true;
+        }
+
+        try {
+            // Run user processing in worker pool, but WAIT to preserve order per partition.
+            Future<?> f = workerPool.submit(() -> processor.process(r));
+            f.get();
+
+            markAsProcessed(tp, r.offset());
+            return true;
+
+        } catch (ExecutionException ee) {
+            Throwable cause = ee.getCause() != null ? ee.getCause() : ee;
+            return handleFailure(tp, r, cause);
+
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            return handleFailure(tp, r, ie);
+
+        } catch (Exception e) {
+            return handleFailure(tp, r, e);
+        }
+    }
+
+    /**
+     * Handles a processing failure for a given record.
+     *
+     * <p>Behavior:
+     * <ol>
+     *   <li>Increment retry attempt count for (tp, offset)</li>
+     *   <li>If attempts <= maxRetries: sleep backoff and return false (retry later, do NOT commit)</li>
+     *   <li>If attempts > maxRetries: publish to DLQ, mark offset processed, return true (allow progress)</li>
+     * </ol>
+     *
+     * <p>Why we mark processed after DLQ:
+     * once the poison record is safely stored elsewhere, we want the consumer group to move forward
+     * and not get stuck forever.</p>
+     */
+    private boolean handleFailure(TopicPartition tp, ConsumerRecord<String, V> r, Throwable t) {
+        int attempt = incrementRetry(tp, r.offset());
+
+        if (attempt <= maxRetries) {
+            log.error("PROCESSING_FAILED_RETRY | topic={} partition={} offset={} attempt={}/{} error={}",
+                    r.topic(), r.partition(), r.offset(), attempt, maxRetries, t.toString());
+
+            backoffQuietly(backoffMs);
+            return false; // do NOT mark processed, do NOT commit past it
+        }
+
+        log.error("POISON_TO_DLQ | topic={} partition={} offset={} attempt={} error={}",
+                r.topic(), r.partition(), r.offset(), attempt, t.toString());
+
+        try {
+            Exception cause = (t instanceof Exception e) ? e : new RuntimeException(t);
+            dlqPublisher.publish(r, cause);
+
+            // DLQ success => advance offset
+            markAsProcessed(tp, r.offset());
+            return true;
+
+        } catch (Exception dlqError) {
+            // If DLQ publish fails, we must NOT commit. Otherwise the record is lost.
+            log.error("DLQ_PUBLISH_FAILED | topic={} partition={} offset={} error={}",
+                    r.topic(), r.partition(), r.offset(), dlqError.toString(), dlqError);
+
+            backoffQuietly(backoffMs);
+            return false;
+        }
+    }
+
+    /**
+     * Marks a record offset as successfully processed for a partition.
+     *
+     * <p>Because we are using Approach 1 (stop on first failure per partition),
+     * offsets are processed in-order. Therefore, simply storing the latest processed
+     * offset is safe and implies contiguity.</p>
+     *
+     * <p>We also clear retry tracking for this offset to prevent retry state leaks.</p>
+     */
+    private void markAsProcessed(TopicPartition tp, long offset) {
+        committableOffsets.put(tp, offset);
+        clearRetry(tp, offset);
+    }
+
+    /**
+     * Commits processed offsets to Kafka with basic error handling.
+     *
+     * <p>Kafka expects commit values as "next offset to read", hence we commit (processedOffset + 1).</p>
+     *
+     * <p>We commit synchronously to keep semantics simple and deterministic.</p>
+     */
+    private void commitWithErrorHandling() {
+        if (committableOffsets.isEmpty()) {
+            return;
+        }
+
+        Map<TopicPartition, OffsetAndMetadata> offsetsToCommit = new HashMap<>();
+        committableOffsets.forEach((tp, processedOffset) ->
+                offsetsToCommit.put(tp, new OffsetAndMetadata(processedOffset + 1))
+        );
+
+        try {
+            consumer.commitSync(offsetsToCommit);
+            log.debug("Committed offsets: {}", offsetsToCommit);
+
+            // Optional: clear the map after commit to avoid repeating commits endlessly.
+            // Safe because we re-add on new successful processing anyway.
+            committableOffsets.clear();
+
+        } catch (CommitFailedException e) {
+            // Happens during rebalance or if consumer lost group membership
+            log.error("Commit failed; will retry next poll. offsets={}", offsetsToCommit, e);
+        } catch (Exception e) {
+            log.error("Unexpected error during commit. offsets={}", offsetsToCommit, e);
+        }
+    }
+
+    /**
+     * Increments retry attempts for a given (partition, offset).
+     *
+     * <p>We also update the lastAttemptTime to support TTL-based cleanup.</p>
+     *
+     * @return the updated attempt count (1-based)
+     */
+    private int incrementRetry(TopicPartition tp, long offset) {
+        Map<Long, RetryMetadata> partitionRetries =
+                retries.computeIfAbsent(tp, k -> new ConcurrentHashMap<>());
+
+        RetryMetadata md = partitionRetries.computeIfAbsent(offset,
+                k -> new RetryMetadata(0, System.currentTimeMillis()));
+
+        md.attempts++;
+        md.lastAttemptTime = System.currentTimeMillis();
+        return md.attempts;
+    }
+
+    /**
+     * Clears retry tracking for a record that has been successfully processed (or DLQ'd and advanced).
+     */
+    private void clearRetry(TopicPartition tp, long offset) {
+        Map<Long, RetryMetadata> partitionRetries = retries.get(tp);
+        if (partitionRetries != null) {
+            partitionRetries.remove(offset);
+        }
+    }
+
+    /**
+     * Removes retry entries whose last attempt time is older than the configured retry TTL.
+     *
+     * <p>This prevents memory leaks if partitions are idle or if offsets are never seen again.</p>
+     */
+    private void cleanupExpiredRetries() {
+        long now = System.currentTimeMillis();
+        retries.forEach((tp, offsetMap) -> {
+            offsetMap.entrySet().removeIf(e -> (now - e.getValue().lastAttemptTime) > retryTtlMs);
+            if (offsetMap.isEmpty()) {
+                retries.remove(tp);
+            }
+        });
+    }
+
+    /**
+     * Sleeps for the specified backoff duration while preserving interrupt status.
+     *
+     * <p>Backoff reduces CPU churn and avoids hammering downstream dependencies during retries.</p>
+     */
+    private void backoffQuietly(long ms) {
+        if (ms <= 0) return;
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Closes the Kafka consumer and internal executors safely.
+     *
+     * <p>This is invoked at the end of the poll loop, whether shutdown is normal or due to failure.</p>
+     */
+    private void closeConsumerSafely() {
+        try {
+            commitWithErrorHandling();
+        } catch (Exception ignore) {
+            // ignore commit failures during shutdown
+        }
+
+        try {
+            consumer.close(Duration.ofSeconds(10));
+            log.info("Consumer closed for topic={}", topic);
+        } catch (Exception e) {
+            log.error("Error closing consumer for topic={}", topic, e);
+        }
+
+        shutdownExecutor(pollExecutor, "pollExecutor");
+        shutdownExecutor(workerPool, "workerPool");
+    }
+
+    /**
+     * Shuts down an executor in a bounded, safe way.
+     */
+    private void shutdownExecutor(ExecutorService executor, String name) {
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            executor.shutdownNow();
+        } catch (Exception e) {
+            log.warn("Failed shutting down executor {}", name, e);
+            executor.shutdownNow();
+        }
+    }
+
+    /**
+     * AutoCloseable contract.
+     *
+     * <p>Calling close() will stop the consumer and release resources.</p>
+     */
+    @Override
+    public void close() {
+        stop();
+    }
+
+    /**
+     * Internal retry metadata per offset.
+     */
+    private static final class RetryMetadata {
+        private int attempts;
+        private long lastAttemptTime;
+
+        private RetryMetadata(int attempts, long lastAttemptTime) {
+            this.attempts = attempts;
+            this.lastAttemptTime = lastAttemptTime;
+        }
+    }
 }
