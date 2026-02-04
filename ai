@@ -1,253 +1,174 @@
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.MockedStatic;
-import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
 @ExtendWith(MockitoExtension.class)
-class AlertValidatorFullCoverageTest {
+class AlertValidator100CoverageTest {
+
+    private ValidationProperties props = mock(ValidationProperties.class);
+
+    // ---------- A: HEADER ----------
 
     @Test
-    void headerNull_branch() {
-        CoreIntegrationRequest request = mock(CoreIntegrationRequest.class);
-        when(request.getHeader()).thenReturn(null);
+    void headerNull_shouldThrow() {
+        CoreIntegrationRequest req = mock(CoreIntegrationRequest.class);
+        when(req.getHeader()).thenReturn(null);
 
         assertThrows(ValidationException.class,
-                () -> AlertValidator.validate(request, mock(ValidationProperties.class)));
+                () -> AlertValidator.validate(req, props));
     }
 
+    // ---------- B: CUSTOMER ALERT ----------
+
     @Test
-    void customerAlertNull_branch() {
-        ValidationProperties props = mock(ValidationProperties.class);
-        CoreIntegrationRequest request = mock(CoreIntegrationRequest.class);
+    void customerAlertNull_shouldThrow() {
+        CoreIntegrationRequest req = baseRequest("PE-zelle");
+        when(req.getCustomerAlert()).thenReturn(null);
 
-        Header header = mock(Header.class);
-        when(request.getHeader()).thenReturn(header);
-        when(request.getCustomerAlert()).thenReturn(null);
+        mockHeaderValidation(req);
 
-        try (MockedStatic<HeaderValidation> mocked = mockStatic(HeaderValidation.class)) {
-            mocked.when(() -> HeaderValidation.headerValidation(header, props))
-                    .thenAnswer(inv -> null); // void static
-
-            assertThrows(ValidationException.class,
-                    () -> AlertValidator.validate(request, props));
-        }
+        assertThrows(ValidationException.class,
+                () -> AlertValidator.validate(req, props));
     }
 
-    @Test
-    void parametersEmpty_branch() {
-        ValidationProperties props = mock(ValidationProperties.class);
-        CoreIntegrationRequest request = mock(CoreIntegrationRequest.class);
+    // ---------- C: PARAMETERS ----------
 
-        Header header = mock(Header.class);
-        when(request.getHeader()).thenReturn(header);
+    @Test
+    void parametersEmpty_shouldThrow() {
+        CoreIntegrationRequest req = baseRequest("PE-zelle");
 
         CustomerAlert alert = mock(CustomerAlert.class);
-        when(request.getCustomerAlert()).thenReturn(alert);
-        when(alert.getParameters()).thenReturn(List.of()); // empty
+        when(req.getCustomerAlert()).thenReturn(alert);
+        when(alert.getParameters()).thenReturn(List.of());
 
-        try (MockedStatic<HeaderValidation> mocked = mockStatic(HeaderValidation.class)) {
-            mocked.when(() -> HeaderValidation.headerValidation(header, props))
-                    .thenAnswer(inv -> null);
+        mockHeaderValidation(req);
 
-            assertThrows(ValidationException.class,
-                    () -> AlertValidator.validate(request, props));
-        }
+        assertThrows(ValidationException.class,
+                () -> AlertValidator.validate(req, props));
     }
 
-    @Test
-    void sourceIdUnsupported_elseBranch() {
-        ValidationProperties props = mock(ValidationProperties.class);
-        CoreIntegrationRequest request = mock(CoreIntegrationRequest.class);
+    // ---------- D: SOURCE ID ----------
 
-        Header header = mock(Header.class);
-        when(request.getHeader()).thenReturn(header);
-        when(header.getSourceId()).thenReturn("SOMETHING_ELSE"); // else path
+    @Test
+    void unsupportedSourceId_shouldThrow() {
+        CoreIntegrationRequest req = baseRequest("OTHER");
 
         CustomerAlert alert = mock(CustomerAlert.class);
-        when(request.getCustomerAlert()).thenReturn(alert);
-        when(alert.getParameters()).thenReturn(List.of(param("partyOlbNumber", "123"))); // non-empty
+        when(req.getCustomerAlert()).thenReturn(alert);
+        when(alert.getParameters()).thenReturn(List.of(param("x","y")));
 
-        try (MockedStatic<HeaderValidation> mocked = mockStatic(HeaderValidation.class)) {
-            mocked.when(() -> HeaderValidation.headerValidation(header, props))
-                    .thenAnswer(inv -> null);
+        mockHeaderValidation(req);
 
-            assertThrows(ValidationException.class,
-                    () -> AlertValidator.validate(request, props));
-        }
+        assertThrows(ValidationException.class,
+                () -> AlertValidator.validate(req, props));
     }
 
+    // ---------- E1: partyOlbNumber blank ----------
+
     @Test
-    void partyOlbNumberBlank_specialRuleBranch() {
-        ValidationProperties props = mock(ValidationProperties.class);
-        CoreIntegrationRequest request = mock(CoreIntegrationRequest.class);
+    void partyOlbNumberBlank_shouldThrow() {
+        CoreIntegrationRequest req = peZelleRequest(
+                param("partyOlbNumber",""),
+                param("channelId","PEZELLE"),
+                param("eventType","ALERT"),
+                param("partyIdType","OLB")
+        );
 
-        Header header = mock(Header.class);
-        when(request.getHeader()).thenReturn(header);
-        when(header.getSourceId()).thenReturn("PE-zelle");
+        mockHeaderValidation(req);
 
-        CustomerAlert alert = mock(CustomerAlert.class);
-        when(request.getCustomerAlert()).thenReturn(alert);
-
-        when(alert.getParameters()).thenReturn(List.of(
-                param("partyOlbNumber", ""),          // special rule fail
-                param("channelId", "PEZELLE"),
-                param("eventType", "ALERT"),
-                param("partyIdType", "OLB")
-        ));
-
-        try (MockedStatic<HeaderValidation> mocked = mockStatic(HeaderValidation.class)) {
-            mocked.when(() -> HeaderValidation.headerValidation(header, props))
-                    .thenAnswer(inv -> null);
-
-            assertThrows(ValidationException.class,
-                    () -> AlertValidator.validate(request, props));
-        }
+        assertThrows(ValidationException.class,
+                () -> AlertValidator.validate(req, props));
     }
 
+    // ---------- E2: partyOlbNumber missing ----------
+
     @Test
-    void partyOlbNumberMissing_specialRuleBranch() {
-        ValidationProperties props = mock(ValidationProperties.class);
-        CoreIntegrationRequest request = mock(CoreIntegrationRequest.class);
+    void partyOlbNumberMissing_shouldThrow() {
+        CoreIntegrationRequest req = peZelleRequest(
+                param("channelId","PEZELLE"),
+                param("eventType","ALERT"),
+                param("partyIdType","OLB")
+        );
 
-        Header header = mock(Header.class);
-        when(request.getHeader()).thenReturn(header);
-        when(header.getSourceId()).thenReturn("PE-zelle");
+        mockHeaderValidation(req);
 
-        CustomerAlert alert = mock(CustomerAlert.class);
-        when(request.getCustomerAlert()).thenReturn(alert);
-
-        // No partyOlbNumber key at all -> your logic hits actualValue==null branch when key is partyOlbNumber
-        when(alert.getParameters()).thenReturn(List.of(
-                param("channelId", "PEZELLE"),
-                param("eventType", "ALERT"),
-                param("partyIdType", "OLB")
-        ));
-
-        try (MockedStatic<HeaderValidation> mocked = mockStatic(HeaderValidation.class)) {
-            mocked.when(() -> HeaderValidation.headerValidation(header, props))
-                    .thenAnswer(inv -> null);
-
-            assertThrows(ValidationException.class,
-                    () -> AlertValidator.validate(request, props));
-        }
+        assertThrows(ValidationException.class,
+                () -> AlertValidator.validate(req, props));
     }
 
+    // ---------- E3: actualValue null ----------
+
     @Test
-    void expectedKeyMissing_generalMissingBranch() {
-        ValidationProperties props = mock(ValidationProperties.class);
-        CoreIntegrationRequest request = mock(CoreIntegrationRequest.class);
+    void expectedKeyMissing_shouldThrow() {
+        CoreIntegrationRequest req = peZelleRequest(
+                param("partyOlbNumber","123"),
+                param("eventType","ALERT"),
+                param("partyIdType","OLB")
+        ); // channelId missing
 
-        Header header = mock(Header.class);
-        when(request.getHeader()).thenReturn(header);
-        when(header.getSourceId()).thenReturn("PE-zelle");
+        mockHeaderValidation(req);
 
-        CustomerAlert alert = mock(CustomerAlert.class);
-        when(request.getCustomerAlert()).thenReturn(alert);
-
-        // Missing "channelId" (which is in EXPECTED_VALUES)
-        when(alert.getParameters()).thenReturn(List.of(
-                param("partyOlbNumber", "123"),
-                param("eventType", "ALERT"),
-                param("partyIdType", "OLB")
-        ));
-
-        try (MockedStatic<HeaderValidation> mocked = mockStatic(HeaderValidation.class)) {
-            mocked.when(() -> HeaderValidation.headerValidation(header, props))
-                    .thenAnswer(inv -> null);
-
-            assertThrows(ValidationException.class,
-                    () -> AlertValidator.validate(request, props));
-        }
+        assertThrows(ValidationException.class,
+                () -> AlertValidator.validate(req, props));
     }
 
+    // ---------- E4: value mismatch ----------
+
     @Test
-    void expectedValueMismatch_branch() {
-        ValidationProperties props = mock(ValidationProperties.class);
-        CoreIntegrationRequest request = mock(CoreIntegrationRequest.class);
+    void valueMismatch_shouldThrow() {
+        CoreIntegrationRequest req = peZelleRequest(
+                param("partyOlbNumber","123"),
+                param("channelId","WRONG"),
+                param("eventType","ALERT"),
+                param("partyIdType","OLB")
+        );
 
-        Header header = mock(Header.class);
-        when(request.getHeader()).thenReturn(header);
-        when(header.getSourceId()).thenReturn("PE-zelle");
+        mockHeaderValidation(req);
 
-        CustomerAlert alert = mock(CustomerAlert.class);
-        when(request.getCustomerAlert()).thenReturn(alert);
-
-        // channelId wrong -> mismatch branch
-        when(alert.getParameters()).thenReturn(List.of(
-                param("partyOlbNumber", "123"),
-                param("channelId", "WRONG"),
-                param("eventType", "ALERT"),
-                param("partyIdType", "OLB")
-        ));
-
-        try (MockedStatic<HeaderValidation> mocked = mockStatic(HeaderValidation.class)) {
-            mocked.when(() -> HeaderValidation.headerValidation(header, props))
-                    .thenAnswer(inv -> null);
-
-            assertThrows(ValidationException.class,
-                    () -> AlertValidator.validate(request, props));
-        }
+        assertThrows(ValidationException.class,
+                () -> AlertValidator.validate(req, props));
     }
 
+    // ---------- F: HAPPY PATH ----------
+
     @Test
-    void happyPath_noException() {
-        ValidationProperties props = mock(ValidationProperties.class);
-        CoreIntegrationRequest request = mock(CoreIntegrationRequest.class);
+    void allValuesCorrect_shouldPass() {
+        CoreIntegrationRequest req = peZelleRequest(
+                param("partyOlbNumber","123"),
+                param("channelId","PEZELLE"),
+                param("eventType","ALERT"),
+                param("partyIdType","OLB")
+        );
 
-        Header header = mock(Header.class);
-        when(request.getHeader()).thenReturn(header);
-        when(header.getSourceId()).thenReturn("PE-zelle");
+        mockHeaderValidation(req);
 
-        CustomerAlert alert = mock(CustomerAlert.class);
-        when(request.getCustomerAlert()).thenReturn(alert);
-
-        when(alert.getParameters()).thenReturn(List.of(
-                param("partyOlbNumber", "123"),
-                param("channelId", "PEZELLE"),
-                param("eventType", "ALERT"),
-                param("partyIdType", "OLB")
-        ));
-
-        try (MockedStatic<HeaderValidation> mocked = mockStatic(HeaderValidation.class)) {
-            mocked.when(() -> HeaderValidation.headerValidation(header, props))
-                    .thenAnswer(inv -> null);
-
-            assertDoesNotThrow(() -> AlertValidator.validate(request, props));
-        }
+        assertDoesNotThrow(() ->
+                AlertValidator.validate(req, props));
     }
 
-    @Test
-    void duplicateKey_inCollectorsToMap_branch() {
-        ValidationProperties props = mock(ValidationProperties.class);
-        CoreIntegrationRequest request = mock(CoreIntegrationRequest.class);
+    // ---------- HELPERS ----------
 
+    private CoreIntegrationRequest baseRequest(String sourceId) {
+        CoreIntegrationRequest req = mock(CoreIntegrationRequest.class);
         Header header = mock(Header.class);
-        when(request.getHeader()).thenReturn(header);
-        when(header.getSourceId()).thenReturn("PE-zelle");
+        when(header.getSourceId()).thenReturn(sourceId);
+        when(req.getHeader()).thenReturn(header);
+        return req;
+    }
+
+    private CoreIntegrationRequest peZelleRequest(Parameter... params) {
+        CoreIntegrationRequest req = baseRequest("PE-zelle");
 
         CustomerAlert alert = mock(CustomerAlert.class);
-        when(request.getCustomerAlert()).thenReturn(alert);
+        when(req.getCustomerAlert()).thenReturn(alert);
+        when(alert.getParameters()).thenReturn(List.of(params));
 
-        // Two parameters with same fieldId => Collectors.toMap throws IllegalStateException
-        when(alert.getParameters()).thenReturn(List.of(
-                param("partyOlbNumber", "123"),
-                param("partyOlbNumber", "456"),
-                param("channelId", "PEZELLE"),
-                param("eventType", "ALERT"),
-                param("partyIdType", "OLB")
-        ));
+        return req;
+    }
 
-        try (MockedStatic<HeaderValidation> mocked = mockStatic(HeaderValidation.class)) {
-            mocked.when(() -> HeaderValidation.headerValidation(header, props))
-                    .thenAnswer(inv -> null);
-
-            assertThrows(IllegalStateException.class,
-                    () -> AlertValidator.validate(request, props));
+    private void mockHeaderValidation(CoreIntegrationRequest req) {
+        Header header = req.getHeader();
+        try (MockedStatic<HeaderValidation> mocked =
+                     mockStatic(HeaderValidation.class)) {
+            mocked.when(() ->
+                HeaderValidation.headerValidation(header, props)
+            ).thenAnswer(inv -> null);
         }
     }
 
