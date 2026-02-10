@@ -1,280 +1,30 @@
-package com.truist.cps.kafka.dlt;
-
 import com.truist.cps.kafka.config.KafkaSdkProperties;
-import com.truist.cps.kafka.notification.SdkNotification;
-import com.truist.cps.kafka.notification.SdkNotifier;
-import com.truist.cps.kafka.logging.SdkLogSanitizer;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.common.TopicPartition;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.kafka.core.KafkaOperations;
-import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
+import org.springframework.util.backoff.BackOff;
+import org.springframework.util.backoff.FixedBackOff;
 
-import java.time.Instant;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Objects;
+public final class SdkBackOffFactory {
 
-/**
- * DeadLetterPublishingRecoverer that:
- * - resolves DLT topic based on SDK properties
- * - publishes failed record to DLT
- * - sends notification (email/teams via SdkNotifier)
- *
- * NOTE: This class is used when retries are exhausted OR exception is non-retryable
- * (except "bad payload" which you will handle separately via SkipBadPayloadRecoverer).
- */
-public class NotifyingDeadLetterRecoverer extends DeadLetterPublishingRecoverer {
+    private SdkBackOffFactory() {}
 
-    private static final Logger log = LoggerFactory.getLogger(NotifyingDeadLetterRecoverer.class);
+    public static BackOff buildBackOff(KafkaSdkProperties props) {
+        KafkaSdkProperties.Retry retry = props.getRetry();
 
-    private final KafkaSdkProperties props;
-    private final SdkNotifier notifier;
-
-    public NotifyingDeadLetterRecoverer(KafkaOperations<Object, Object> template,
-                                        SdkNotifier notifier,
-                                        KafkaSdkProperties props) {
-
-        // IMPORTANT: do not reference instance methods in super(...) mapping.
-        // Only use static helpers / constructor args.
-        super(template, (record, ex) -> {
-            String dltTopic = DltTopicResolver.resolve(props, record.topic());
-            return new TopicPartition(dltTopic, record.partition());
-        });
-
-        this.props = Objects.requireNonNull(props, "props");
-        this.notifier = Objects.requireNonNull(notifier, "notifier");
-    }
-
-    @Override
-    public void accept(ConsumerRecord<?, ?> record, Exception exception) {
-        // 1) Publish to DLT (super does the publish)
-        try {
-            super.accept(record, exception);
-        } catch (Exception publishEx) {
-            // If DLT publish fails, still notify + log, but rethrowing would keep record looping.
-            // Whether to rethrow depends on your policy; for now we log and rethrow so it retries DLT publish.
-            // If you want "never block", remove the throw.
-            log.error("DLT publish failed. topic={}, partition={}, offset={}, err={}",
-                    safe(record.topic()), record.partition(), record.offset(), safe(publishEx.toString()));
-            throw publishEx;
+        // Retry disabled → no retries
+        if (retry == null || !retry.isEnabled()) {
+            return new FixedBackOff(0L, 0L);
         }
 
-        // 2) Notify (non-blocking)
-        notifyDlq(record, exception);
+        long backoffMs = retry.getBackoffMs() > 0
+                ? retry.getBackoffMs()
+                : 1000L;
+
+        int maxAttempts = retry.getMaxAttempts() > 0
+                ? retry.getMaxAttempts()
+                : 1;
+
+        // Spring expects number of *retries*, not attempts
+        long maxRetries = Math.max(0, maxAttempts - 1);
+
+        return new FixedBackOff(backoffMs, maxRetries);
     }
-
-    private void notifyDlq(ConsumerRecord<?, ?> record, Exception exception) {
-        try {
-            if (props.getNotifications() != null && props.getNotifications().isEnabled()) {
-                Map<String, String> tags = buildTags(record);
-                String msg = "Record sent to DLT. " +
-                        "topic=" + record.topic() +
-                        ", partition=" + record.partition() +
-                        ", offset=" + record.offset() +
-                        ", cause=" + exception.getClass().getSimpleName() +
-                        ", err=" + safe(exception.toString());
-
-                notifier.notify(SdkNotification.builder()
-                        .type("DLT")
-                        .timestamp(Instant.now())
-                        .message(msg)
-                        .tags(tags)
-                        .build());
-            }
-        } catch (Exception notifyEx) {
-            log.warn("DLT notification failed (ignored). err={}", safe(notifyEx.toString()));
-        }
-    }
-
-    private Map<String, String> buildTags(ConsumerRecord<?, ?> record) {
-        Map<String, String> tags = new LinkedHashMap<>();
-        tags.put("topic", safe(record.topic()));
-        tags.put("partition", String.valueOf(record.partition()));
-        tags.put("offset", String.valueOf(record.offset()));
-        if (props.getGroupId() != null) tags.put("groupId", safe(props.getGroupId()));
-        String resolved = DltTopicResolver.resolve(props, record.topic());
-        tags.put("dltTopic", safe(resolved));
-        return tags;
-    }
-
-    private static String safe(String s) {
-        if (s == null) return "null";
-        return SdkLogSanitizer.sanitize(s);
-    }
-}
-
-
-
-====================
-package com.truist.cps.kafka.dlt;
-
-import com.truist.cps.kafka.config.KafkaSdkProperties;
-
-import java.util.Map;
-
-public final class DltTopicResolver {
-
-    private DltTopicResolver() {}
-
-    /**
-     * Resolution order (recommended):
-     * 1) fixed topic: kafka.sdk.dlt.topic
-     * 2) per-source mapping: kafka.sdk.dlt.topic-map.<sourceTopic>=<dltTopic>
-     * 3) suffix default: <sourceTopic><suffix> (default ".DLT")
-     */
-    public static String resolve(KafkaSdkProperties props, String sourceTopic) {
-        if (props == null) return defaultSuffix(sourceTopic, ".DLT");
-        KafkaSdkProperties.Dlt dlt = props.getDlt();
-        if (dlt == null) return defaultSuffix(sourceTopic, ".DLT");
-
-        // 1) fixed
-        if (dlt.getTopic() != null && !dlt.getTopic().isBlank()) {
-            return dlt.getTopic().trim();
-        }
-
-        // 2) map
-        Map<String, String> map = dlt.getTopicMap();
-        if (map != null) {
-            String mapped = map.get(sourceTopic);
-            if (mapped != null && !mapped.isBlank()) return mapped.trim();
-        }
-
-        // 3) suffix
-        String suffix = (dlt.getSuffix() != null && !dlt.getSuffix().isBlank()) ? dlt.getSuffix() : ".DLT";
-        return defaultSuffix(sourceTopic, suffix);
-    }
-
-    private static String defaultSuffix(String sourceTopic, String suffix) {
-        if (sourceTopic == null) return "unknown" + suffix;
-        return sourceTopic + suffix;
-    }
-}
-
-=========================
-
-package com.truist.cps.kafka.dlt;
-
-import com.truist.cps.kafka.config.KafkaSdkProperties;
-import com.truist.cps.kafka.logging.SdkLogSanitizer;
-import com.truist.cps.kafka.notification.SdkNotification;
-import com.truist.cps.kafka.notification.SdkNotifier;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.kafka.listener.ConsumerRecordRecoverer;
-
-import java.time.Instant;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Objects;
-
-/**
- * For BAD_PAYLOAD only:
- * - log
- * - notify
- * - let DefaultErrorHandler commit the offset (setCommitRecovered(true))
- *
- * DO NOT publish to DLT.
- */
-public class SkipBadPayloadRecoverer implements ConsumerRecordRecoverer {
-
-    private static final Logger log = LoggerFactory.getLogger(SkipBadPayloadRecoverer.class);
-
-    private final SdkNotifier notifier;
-    private final KafkaSdkProperties props;
-
-    public SkipBadPayloadRecoverer(SdkNotifier notifier, KafkaSdkProperties props) {
-        this.notifier = Objects.requireNonNull(notifier, "notifier");
-        this.props = Objects.requireNonNull(props, "props");
-    }
-
-    @Override
-    public void accept(ConsumerRecord<?, ?> record, Exception exception) {
-        log.warn("BAD_PAYLOAD skipped (offset will be committed). topic={}, partition={}, offset={}, err={}",
-                safe(record.topic()),
-                record.partition(),
-                record.offset(),
-                safe(exception.toString()));
-
-        try {
-            if (props.getNotifications() != null && props.getNotifications().isEnabled()) {
-                Map<String, String> tags = new LinkedHashMap<>();
-                tags.put("topic", safe(record.topic()));
-                tags.put("partition", String.valueOf(record.partition()));
-                tags.put("offset", String.valueOf(record.offset()));
-                if (props.getGroupId() != null) tags.put("groupId", safe(props.getGroupId()));
-
-                notifier.notify(SdkNotification.builder()
-                        .type("BAD_PAYLOAD")
-                        .timestamp(Instant.now())
-                        .message("Bad payload skipped and offset committed. " +
-                                "topic=" + record.topic() +
-                                ", partition=" + record.partition() +
-                                ", offset=" + record.offset() +
-                                ", err=" + safe(exception.toString()))
-                        .tags(tags)
-                        .build());
-            }
-        } catch (Exception notifyEx) {
-            log.warn("BAD_PAYLOAD notification failed (ignored). err={}", safe(notifyEx.toString()));
-        }
-    }
-
-    private static String safe(String s) {
-        if (s == null) return "null";
-        return SdkLogSanitizer.sanitize(s);
-    }
-}
-
-
-======================
-
-import com.truist.cps.kafka.dlt.NotifyingDeadLetterRecoverer;
-import com.truist.cps.kafka.dlt.SkipBadPayloadRecoverer;
-import com.truist.cps.kafka.notification.SdkNotifier;
-import org.apache.kafka.common.errors.SerializationException;
-import org.springframework.kafka.listener.CommonErrorHandler;
-import org.springframework.kafka.listener.DefaultErrorHandler;
-import org.springframework.kafka.support.serializer.DeserializationException;
-
-@Bean(name = "sdkCommonErrorHandler")
-public CommonErrorHandler sdkCommonErrorHandler(
-        KafkaTemplate<String, Object> sdkKafkaTemplate,
-        SdkNotifier notifier,
-        KafkaSdkProperties props
-) {
-    var dltRecoverer = new NotifyingDeadLetterRecoverer(sdkKafkaTemplate, notifier, props);
-    var badPayloadRecoverer = new SkipBadPayloadRecoverer(notifier, props);
-
-    DefaultErrorHandler eh = new DefaultErrorHandler((record, ex) -> {
-        if (isBadPayload(ex)) {
-            badPayloadRecoverer.accept(record, ex);  // log + notify
-        } else {
-            dltRecoverer.accept(record, ex);         // publish + notify
-        }
-    }, buildBackOff(props));
-
-    eh.setCommitRecovered(true);
-
-    // BAD_PAYLOAD should not retry
-    eh.addNotRetryableExceptions(
-            DeserializationException.class,
-            SerializationException.class,
-            org.apache.kafka.common.errors.RecordDeserializationException.class
-    );
-
-    return eh;
-}
-
-private static boolean isBadPayload(Throwable ex) {
-    Throwable cur = ex;
-    while (cur != null) {
-        if (cur instanceof DeserializationException) return true;
-        if (cur instanceof SerializationException) return true;
-        if (cur instanceof org.apache.kafka.common.errors.RecordDeserializationException) return true;
-        cur = cur.getCause();
-    }
-    return false;
 }
