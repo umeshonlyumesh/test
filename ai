@@ -1,167 +1,95 @@
-package com.truist.cps.kafka.retry;
+
+package com.truist.cps.kafka.monitor;
 
 import com.truist.cps.kafka.config.KafkaSdkProperties;
-
-public final class SdkProducerRetryTemplate {
-
-    private SdkProducerRetryTemplate() {}
-
-    public static <T> T execute(KafkaSdkProperties props, Retryable<T> fn) throws Exception {
-        KafkaSdkProperties.Retry retry = props.getRetry();
-        boolean enabled = retry != null && retry.isEnabled();
-        int maxAttempts = enabled ? Math.max(1, retry.getMaxAttempts()) : 1;
-        long backoffMs = enabled ? Math.max(0, retry.getBackoffMs()) : 0;
-
-        Exception last = null;
-
-        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-            try {
-                return fn.call(attempt);
-            } catch (Exception ex) {
-                last = ex;
-                if (attempt >= maxAttempts) break;
-                if (backoffMs > 0) Thread.sleep(backoffMs);
-            }
-        }
-        throw last;
-    }
-
-    @FunctionalInterface
-    public interface Retryable<T> {
-        T call(int attempt) throws Exception;
-    }
-}
-
-===========
-
-package com.truist.cps.kafka.dlq;
-
-import com.truist.cps.kafka.config.KafkaSdkProperties;
-import com.truist.cps.kafka.logging.SdkLogSanitizer;
-import com.truist.cps.kafka.notification.SdkNotification;
 import com.truist.cps.kafka.notification.SdkNotifier;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.kafka.core.KafkaTemplate;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.admin.*;
+import org.apache.kafka.clients.consumer.OffsetAndMetadata;
+import org.apache.kafka.common.TopicPartition;
+import org.springframework.scheduling.annotation.Scheduled;
 
-import java.time.Instant;
-import java.util.Map;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
-public class ProducerDlqPublisher {
+@Slf4j
+@RequiredArgsConstructor
+public class LagMonitor {
 
-    private static final Logger log = LoggerFactory.getLogger(ProducerDlqPublisher.class);
-
-    private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final AdminClient adminClient;
     private final KafkaSdkProperties props;
     private final SdkNotifier notifier;
 
-    public ProducerDlqPublisher(KafkaTemplate<String, Object> kafkaTemplate,
-                                KafkaSdkProperties props,
-                                SdkNotifier notifier) {
-        this.kafkaTemplate = kafkaTemplate;
-        this.props = props;
-        this.notifier = notifier;
-    }
+    // To prevent alert spam
+    private final Map<String, Long> lastNotified = new ConcurrentHashMap<>();
 
-    public void publishToDlq(ProducerRecord<String, Object> original, Exception cause) {
-        String dlqTopic = resolveProducerDlqTopic(props, original.topic());
+    @Scheduled(fixedDelayString = "#{@kafkaSdkProperties.lag.checkIntervalMs}")
+    public void checkLag() {
 
-        try {
-            // Send same key/value to DLQ topic. You can also copy headers if needed.
-            ProducerRecord<String, Object> dlqRecord =
-                    new ProducerRecord<>(dlqTopic, original.partition(), original.timestamp(), original.key(), original.value(), original.headers());
-
-            kafkaTemplate.send(dlqRecord);
-
-            log.warn("Producer send failed; published to producer DLQ. srcTopic={}, dlqTopic={}, key={}, err={}",
-                    safe(original.topic()), safe(dlqTopic), safe(original.key()), safe(cause.toString()));
-
-            notifyDlq(original, dlqTopic, cause);
-
-        } catch (Exception dlqEx) {
-            // DLQ publish failure is serious; log loudly. Decide whether to throw or swallow.
-            log.error("Producer DLQ publish FAILED. srcTopic={}, dlqTopic={}, err={}, dlqErr={}",
-                    safe(original.topic()), safe(dlqTopic), safe(cause.toString()), safe(dlqEx.toString()));
+        if (!props.getLag().isEnabled()) {
+            return;
         }
-    }
 
-    private void notifyDlq(ProducerRecord<String, Object> original, String dlqTopic, Exception cause) {
+        String groupId = props.getGroupId();
+        long threshold = props.getLag().getThreshold();
+        long cooldown = props.getLag().getNotifyCooldownMs();
+
         try {
-            if (props.getNotifications() != null && props.getNotifications().isEnabled()) {
-                notifier.notify(SdkNotification.builder()
-                        .type("PRODUCER_DLQ")
-                        .timestamp(Instant.now())
-                        .message("Producer send failed; message published to DLQ. srcTopic=" + original.topic()
-                                + ", dlqTopic=" + dlqTopic
-                                + ", err=" + safe(cause.toString()))
-                        .tags(Map.of(
-                                "srcTopic", safe(original.topic()),
-                                "dlqTopic", safe(dlqTopic),
-                                "groupId", safe(props.getGroupId())
-                        ))
-                        .build());
+            // 1️⃣ Get committed offsets
+            Map<TopicPartition, OffsetAndMetadata> committed =
+                    adminClient.listConsumerGroupOffsets(groupId)
+                            .partitionsToOffsetAndMetadata()
+                            .get();
+
+            if (committed.isEmpty()) {
+                return;
             }
-        } catch (Exception notifyEx) {
-            log.warn("Producer DLQ notification failed (ignored). err={}", safe(notifyEx.toString()));
+
+            // 2️⃣ Get latest offsets
+            Map<TopicPartition, OffsetSpec> request = new HashMap<>();
+            committed.keySet().forEach(tp -> request.put(tp, OffsetSpec.latest()));
+
+            Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> latest =
+                    adminClient.listOffsets(request)
+                            .all()
+                            .get();
+
+            // 3️⃣ Calculate lag
+            for (Map.Entry<TopicPartition, OffsetAndMetadata> entry : committed.entrySet()) {
+
+                TopicPartition tp = entry.getKey();
+                long committedOffset = entry.getValue().offset();
+                long latestOffset = latest.get(tp).offset();
+
+                long lag = Math.max(0, latestOffset - committedOffset);
+
+                if (lag > threshold) {
+                    log.warn("Lag exceeded topic={} partition={} lag={} threshold={}",
+                            tp.topic(), tp.partition(), lag, threshold);
+
+                    notifyIfAllowed(tp, lag, threshold, cooldown);
+                }
+            }
+
+        } catch (Exception e) {
+            log.error("Lag monitor failed", e);
         }
     }
 
-    private static String resolveProducerDlqTopic(KafkaSdkProperties props, String sourceTopic) {
-        // Recommended: separate producer DLQ config; fallback to consumer DLT suffix
-        if (props.getDlq() != null && props.getDlq().getFixedTopic() != null && !props.getDlq().getFixedTopic().isBlank()) {
-            return props.getDlq().getFixedTopic();
-        }
-        String suffix = (props.getDlq() != null && props.getDlq().getSuffix() != null && !props.getDlq().getSuffix().isBlank())
-                ? props.getDlq().getSuffix()
-                : ".PRODUCER.DLQ";
-        return sourceTopic + suffix;
-    }
+    private void notifyIfAllowed(TopicPartition tp,
+                                 long lag,
+                                 long threshold,
+                                 long cooldownMs) {
 
-    private static String safe(Object v) {
-        return SdkLogSanitizer.sanitize(v);
-    }
-}
+        String key = tp.topic() + "-" + tp.partition();
+        long now = System.currentTimeMillis();
 
+        Long last = lastNotified.get(key);
 
-===========
-
-package com.truist.cps.kafka.producer;
-
-import com.truist.cps.kafka.config.KafkaSdkProperties;
-import com.truist.cps.kafka.dlq.ProducerDlqPublisher;
-import com.truist.cps.kafka.retry.SdkProducerRetryTemplate;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.springframework.kafka.core.KafkaTemplate;
-
-import java.util.concurrent.TimeUnit;
-
-public class SdkKafkaProducer {
-
-    private final KafkaTemplate<String, Object> kafkaTemplate;
-    private final KafkaSdkProperties props;
-    private final ProducerDlqPublisher dlqPublisher;
-
-    public SdkKafkaProducer(KafkaTemplate<String, Object> kafkaTemplate,
-                            KafkaSdkProperties props,
-                            ProducerDlqPublisher dlqPublisher) {
-        this.kafkaTemplate = kafkaTemplate;
-        this.props = props;
-        this.dlqPublisher = dlqPublisher;
-    }
-
-    public void send(String topic, String key, Object value) {
-        ProducerRecord<String, Object> record = new ProducerRecord<>(topic, key, value);
-
-        try {
-            SdkProducerRetryTemplate.execute(props, attempt -> {
-                // block for ack so we can decide DLQ on failure
-                kafkaTemplate.send(record).get(props.getProducer().getSendTimeoutMs(), TimeUnit.MILLISECONDS);
-                return null;
-            });
-        } catch (Exception sendEx) {
-            // After attempts exhausted: publish to producer DLQ + notify
-            dlqPublisher.publishToDlq(record, sendEx);
+        if (last == null || now - last > cooldownMs) {
+            notifier.onLagThresholdExceeded(tp.topic(), tp.partition(), lag, threshold);
+            lastNotified.put(key, now);
         }
     }
 }
