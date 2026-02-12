@@ -1,95 +1,85 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
 
-package com.truist.cps.kafka.monitor;
+  <modelVersion>4.0.0</modelVersion>
 
-import com.truist.cps.kafka.config.KafkaSdkProperties;
-import com.truist.cps.kafka.notification.SdkNotifier;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.apache.kafka.clients.admin.*;
-import org.apache.kafka.clients.consumer.OffsetAndMetadata;
-import org.apache.kafka.common.TopicPartition;
-import org.springframework.scheduling.annotation.Scheduled;
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.5.7</version>
+    <relativePath/>
+  </parent>
 
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+  <groupId>com.truist.cps.kafka</groupId>
+  <artifactId>cps-kafka-sdk</artifactId>
+  <version>1.0.0</version>
+  <packaging>jar</packaging>
 
-@Slf4j
-@RequiredArgsConstructor
-public class LagMonitor {
+  <properties>
+    <java.version>21</java.version>
+    <lombok.version>1.18.38</lombok.version>
+    <confluent.version>7.4.0</confluent.version>
+    <avro.version>1.12.1</avro.version>
+  </properties>
 
-    private final AdminClient adminClient;
-    private final KafkaSdkProperties props;
-    private final SdkNotifier notifier;
+  <dependencies>
+    <!-- Kafka -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-kafka</artifactId>
+    </dependency>
 
-    // To prevent alert spam
-    private final Map<String, Long> lastNotified = new ConcurrentHashMap<>();
+    <!-- Optional: configuration properties metadata -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-configuration-processor</artifactId>
+      <optional>true</optional>
+    </dependency>
 
-    @Scheduled(fixedDelayString = "#{@kafkaSdkProperties.lag.checkIntervalMs}")
-    public void checkLag() {
+    <!-- Lombok -->
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <optional>true</optional>
+    </dependency>
 
-        if (!props.getLag().isEnabled()) {
-            return;
-        }
+    <!-- Confluent Avro -->
+    <dependency>
+      <groupId>io.confluent</groupId>
+      <artifactId>kafka-avro-serializer</artifactId>
+      <version>${confluent.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.avro</groupId>
+      <artifactId>avro</artifactId>
+      <version>${avro.version}</version>
+    </dependency>
+  </dependencies>
 
-        String groupId = props.getGroupId();
-        long threshold = props.getLag().getThreshold();
-        long cooldown = props.getLag().getNotifyCooldownMs();
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+        <configuration>
+          <release>${java.version}</release>
+          <annotationProcessorPaths>
+            <path>
+              <groupId>org.projectlombok</groupId>
+              <artifactId>lombok</artifactId>
+              <version>${lombok.version}</version>
+            </path>
+            <path>
+              <groupId>org.springframework.boot</groupId>
+              <artifactId>spring-boot-configuration-processor</artifactId>
+              <version>${project.parent.version}</version>
+            </path>
+          </annotationProcessorPaths>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
 
-        try {
-            // 1️⃣ Get committed offsets
-            Map<TopicPartition, OffsetAndMetadata> committed =
-                    adminClient.listConsumerGroupOffsets(groupId)
-                            .partitionsToOffsetAndMetadata()
-                            .get();
-
-            if (committed.isEmpty()) {
-                return;
-            }
-
-            // 2️⃣ Get latest offsets
-            Map<TopicPartition, OffsetSpec> request = new HashMap<>();
-            committed.keySet().forEach(tp -> request.put(tp, OffsetSpec.latest()));
-
-            Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> latest =
-                    adminClient.listOffsets(request)
-                            .all()
-                            .get();
-
-            // 3️⃣ Calculate lag
-            for (Map.Entry<TopicPartition, OffsetAndMetadata> entry : committed.entrySet()) {
-
-                TopicPartition tp = entry.getKey();
-                long committedOffset = entry.getValue().offset();
-                long latestOffset = latest.get(tp).offset();
-
-                long lag = Math.max(0, latestOffset - committedOffset);
-
-                if (lag > threshold) {
-                    log.warn("Lag exceeded topic={} partition={} lag={} threshold={}",
-                            tp.topic(), tp.partition(), lag, threshold);
-
-                    notifyIfAllowed(tp, lag, threshold, cooldown);
-                }
-            }
-
-        } catch (Exception e) {
-            log.error("Lag monitor failed", e);
-        }
-    }
-
-    private void notifyIfAllowed(TopicPartition tp,
-                                 long lag,
-                                 long threshold,
-                                 long cooldownMs) {
-
-        String key = tp.topic() + "-" + tp.partition();
-        long now = System.currentTimeMillis();
-
-        Long last = lastNotified.get(key);
-
-        if (last == null || now - last > cooldownMs) {
-            notifier.onLagThresholdExceeded(tp.topic(), tp.partition(), lag, threshold);
-            lastNotified.put(key, now);
-        }
-    }
-}
+</project>
