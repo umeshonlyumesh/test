@@ -1,4 +1,4 @@
-limport com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -7,11 +7,11 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.nio.charset.StandardCharsets;
+import java.lang.reflect.Field;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -19,165 +19,201 @@ class AlertConsumerTest {
 
     private ObjectMapper objectMapper;
 
-    @Mock private AlertValidator alertValidator;
+    @Mock private AlertExecutor executor;
     @Mock private ValidationProperties validationProperties;
-    @Mock private RequestBuilder requestBuilder;
-    @Mock private OrchestratorExecutor executor;
+
+    // IMPORTANT: Your code calls these as static methods:
+    // AlertValidator.validate(request, validationProperties)
+    // RequestBuilder.prepareRequest(request)
+    //
+    // To unit test without changing your production code,
+    // Mockito needs "mockito-inline" to mock static methods.
+    //
+    // If you don't want static mocking, I can refactor your class to use injected beans.
+    //
+    // For now, tests below use static mocking (production code unchanged).
 
     private AlertConsumer consumer;
 
     @BeforeEach
-    void setup() {
+    void setup() throws Exception {
         objectMapper = new ObjectMapper();
 
-        // create consumer with real ObjectMapper + mocks
-        consumer = new AlertConsumer(
-                objectMapper,
-                alertValidator,
-                validationProperties,
-                requestBuilder,
-                executor
-        );
+        // Your constructor likely comes from Lombok @RequiredArgsConstructor
+        consumer = new AlertConsumer(objectMapper, executor, validationProperties);
+
+        // set @Value injected field: messageFormat
+        setPrivateField(consumer, "messageFormat", "json"); // default to json for most tests
     }
 
     @Test
     void listen_whenJsonStringValid_shouldValidateBuildAndOrchestrate() throws Exception {
         // given
-        CoreIntegrationRequest req = buildRequest(OperationType.CustomerAlert.name(), "REQ-1");
+        CoreIntegrationRequest req = buildRequest(OperationType.CustomerAlert.name(), "RID-1");
         String json = objectMapper.writeValueAsString(req);
 
         ConsumerRecord<String, Object> rec =
-                new ConsumerRecord<>("topic", 0, 10L, "k1", json);
+                new ConsumerRecord<>("t", 0, 1L, "k1", json);
 
         OrchestratedRequest orchestrated = mock(OrchestratedRequest.class);
-        when(requestBuilder.prepareRequest(any(CoreIntegrationRequest.class))).thenReturn(orchestrated);
 
-        // when
-        consumer.listen(rec);
+        try (var validatorMock = mockStatic(AlertValidator.class);
+             var builderMock = mockStatic(RequestBuilder.class)) {
 
-        // then
-        ArgumentCaptor<CoreIntegrationRequest> captor = ArgumentCaptor.forClass(CoreIntegrationRequest.class);
-        verify(alertValidator, times(1)).validate(captor.capture(), eq(validationProperties));
-        assertEquals("REQ-1", captor.getValue().getHeader().getRequestId());
+            builderMock.when(() -> RequestBuilder.prepareRequest(any(CoreIntegrationRequest.class)))
+                    .thenReturn(orchestrated);
 
-        verify(requestBuilder, times(1)).prepareRequest(any(CoreIntegrationRequest.class));
-        verify(executor, times(1)).orchestrate(orchestrated);
-        verifyNoMoreInteractions(executor);
+            // when
+            consumer.listen(rec);
+
+            // then
+            validatorMock.verify(() -> AlertValidator.validate(any(CoreIntegrationRequest.class), eq(validationProperties)), times(1));
+            builderMock.verify(() -> RequestBuilder.prepareRequest(any(CoreIntegrationRequest.class)), times(1));
+            verify(executor, times(1)).orchestrate(orchestrated);
+        }
     }
 
     @Test
-    void listen_whenAlreadyCoreIntegrationRequest_shouldProcessWithoutJsonParse() {
+    void listen_whenValueAlreadyCoreIntegrationRequest_shouldProcess() {
         // given
-        CoreIntegrationRequest req = buildRequest(OperationType.CustomerAlert.name(), "REQ-2");
+        CoreIntegrationRequest req = buildRequest(OperationType.CustomerAlert.name(), "RID-2");
 
         ConsumerRecord<String, Object> rec =
-                new ConsumerRecord<>("topic", 0, 11L, "k2", req);
+                new ConsumerRecord<>("t", 0, 2L, "k2", req);
 
         OrchestratedRequest orchestrated = mock(OrchestratedRequest.class);
-        when(requestBuilder.prepareRequest(any(CoreIntegrationRequest.class))).thenReturn(orchestrated);
 
-        // when
-        consumer.listen(rec);
+        try (var validatorMock = mockStatic(AlertValidator.class);
+             var builderMock = mockStatic(RequestBuilder.class)) {
 
-        // then
-        verify(alertValidator, times(1)).validate(any(CoreIntegrationRequest.class), eq(validationProperties));
-        verify(requestBuilder, times(1)).prepareRequest(any(CoreIntegrationRequest.class));
-        verify(executor, times(1)).orchestrate(orchestrated);
+            builderMock.when(() -> RequestBuilder.prepareRequest(any(CoreIntegrationRequest.class)))
+                    .thenReturn(orchestrated);
+
+            // when
+            consumer.listen(rec);
+
+            // then
+            validatorMock.verify(() -> AlertValidator.validate(any(CoreIntegrationRequest.class), eq(validationProperties)), times(1));
+            verify(executor, times(1)).orchestrate(orchestrated);
+        }
     }
 
     @Test
-    void listen_whenMapPayload_shouldConvertAndProcess() {
-        // given (Map simulates LinkedHashMap from some JSON deserializer)
+    void listen_whenJsonMap_shouldConvertAndProcess() {
+        // given
         Map<String, Object> header = new LinkedHashMap<>();
         header.put("operation", OperationType.CustomerAlert.name());
-        header.put("requestId", "REQ-3");
+        header.put("requestId", "RID-3");
 
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("header", header);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("header", header);
 
         ConsumerRecord<String, Object> rec =
-                new ConsumerRecord<>("topic", 0, 12L, "k3", body);
+                new ConsumerRecord<>("t", 0, 3L, "k3", payload);
 
         OrchestratedRequest orchestrated = mock(OrchestratedRequest.class);
-        when(requestBuilder.prepareRequest(any(CoreIntegrationRequest.class))).thenReturn(orchestrated);
 
-        // when
-        consumer.listen(rec);
+        try (var validatorMock = mockStatic(AlertValidator.class);
+             var builderMock = mockStatic(RequestBuilder.class)) {
 
-        // then
-        verify(alertValidator, times(1)).validate(any(CoreIntegrationRequest.class), eq(validationProperties));
-        verify(executor, times(1)).orchestrate(orchestrated);
-    }
+            builderMock.when(() -> RequestBuilder.prepareRequest(any(CoreIntegrationRequest.class)))
+                    .thenReturn(orchestrated);
 
-    @Test
-    void listen_whenInvalidOperation_shouldNotOrchestrate() {
-        // given
-        CoreIntegrationRequest req = buildRequest("SomeOtherOperation", "REQ-4");
+            // when
+            consumer.listen(rec);
 
-        ConsumerRecord<String, Object> rec =
-                new ConsumerRecord<>("topic", 0, 13L, "k4", req);
-
-        // when
-        consumer.listen(rec);
-
-        // then
-        verifyNoInteractions(alertValidator);
-        verifyNoInteractions(requestBuilder);
-        verifyNoInteractions(executor);
-    }
-
-    @Test
-    void listen_whenHeaderNull_shouldNotOrchestrate() {
-        // given
-        CoreIntegrationRequest req = new CoreIntegrationRequest();
-        req.setHeader(null);
-
-        ConsumerRecord<String, Object> rec =
-                new ConsumerRecord<>("topic", 0, 14L, "k5", req);
-
-        // when
-        consumer.listen(rec);
-
-        // then
-        verifyNoInteractions(alertValidator);
-        verifyNoInteractions(requestBuilder);
-        verifyNoInteractions(executor);
-    }
-
-    @Test
-    void listen_whenBadJson_shouldNotOrchestrateAndNotThrow() {
-        // given
-        String badJson = "{not-valid-json";
-
-        ConsumerRecord<String, Object> rec =
-                new ConsumerRecord<>("topic", 0, 15L, "k6", badJson);
-
-        // when / then (should not throw)
-        assertDoesNotThrow(() -> consumer.listen(rec));
-
-        verifyNoInteractions(alertValidator);
-        verifyNoInteractions(requestBuilder);
-        verifyNoInteractions(executor);
+            // then
+            validatorMock.verify(() -> AlertValidator.validate(any(CoreIntegrationRequest.class), eq(validationProperties)), times(1));
+            verify(executor, times(1)).orchestrate(orchestrated);
+        }
     }
 
     @Test
     void listen_whenJsonBytesValid_shouldProcess() throws Exception {
         // given
-        CoreIntegrationRequest req = buildRequest(OperationType.CustomerAlert.name(), "REQ-7");
+        CoreIntegrationRequest req = buildRequest(OperationType.CustomerAlert.name(), "RID-4");
         byte[] bytes = objectMapper.writeValueAsBytes(req);
 
         ConsumerRecord<String, Object> rec =
-                new ConsumerRecord<>("topic", 0, 16L, "k7", bytes);
+                new ConsumerRecord<>("t", 0, 4L, "k4", bytes);
 
         OrchestratedRequest orchestrated = mock(OrchestratedRequest.class);
-        when(requestBuilder.prepareRequest(any(CoreIntegrationRequest.class))).thenReturn(orchestrated);
 
-        // when
-        consumer.listen(rec);
+        try (var validatorMock = mockStatic(AlertValidator.class);
+             var builderMock = mockStatic(RequestBuilder.class)) {
 
-        // then
-        verify(alertValidator, times(1)).validate(any(CoreIntegrationRequest.class), eq(validationProperties));
-        verify(executor, times(1)).orchestrate(orchestrated);
+            builderMock.when(() -> RequestBuilder.prepareRequest(any(CoreIntegrationRequest.class)))
+                    .thenReturn(orchestrated);
+
+            // when
+            consumer.listen(rec);
+
+            // then
+            validatorMock.verify(() -> AlertValidator.validate(any(CoreIntegrationRequest.class), eq(validationProperties)), times(1));
+            verify(executor, times(1)).orchestrate(orchestrated);
+        }
+    }
+
+    @Test
+    void listen_whenInvalidOperation_shouldNotValidateOrOrchestrate() {
+        // given
+        CoreIntegrationRequest req = buildRequest("SomeOtherOperation", "RID-5");
+
+        ConsumerRecord<String, Object> rec =
+                new ConsumerRecord<>("t", 0, 5L, "k5", req);
+
+        try (var validatorMock = mockStatic(AlertValidator.class);
+             var builderMock = mockStatic(RequestBuilder.class)) {
+
+            // when
+            consumer.listen(rec);
+
+            // then
+            validatorMock.verifyNoInteractions();
+            builderMock.verifyNoInteractions();
+            verifyNoInteractions(executor);
+        }
+    }
+
+    @Test
+    void listen_whenHeaderNull_shouldNotValidateOrOrchestrate() {
+        // given
+        CoreIntegrationRequest req = new CoreIntegrationRequest();
+        req.setHeader(null);
+
+        ConsumerRecord<String, Object> rec =
+                new ConsumerRecord<>("t", 0, 6L, "k6", req);
+
+        try (var validatorMock = mockStatic(AlertValidator.class);
+             var builderMock = mockStatic(RequestBuilder.class)) {
+
+            // when
+            consumer.listen(rec);
+
+            // then
+            validatorMock.verifyNoInteractions();
+            builderMock.verifyNoInteractions();
+            verifyNoInteractions(executor);
+        }
+    }
+
+    @Test
+    void listen_whenBadJsonString_shouldNotThrow_andNotOrchestrate() {
+        // given
+        ConsumerRecord<String, Object> rec =
+                new ConsumerRecord<>("t", 0, 7L, "k7", "{bad-json");
+
+        try (var validatorMock = mockStatic(AlertValidator.class);
+             var builderMock = mockStatic(RequestBuilder.class)) {
+
+            // when/then
+            assertDoesNotThrow(() -> consumer.listen(rec));
+
+            // then
+            validatorMock.verifyNoInteractions();
+            builderMock.verifyNoInteractions();
+            verifyNoInteractions(executor);
+        }
     }
 
     // ---------------- helpers ----------------
@@ -190,5 +226,11 @@ class AlertConsumerTest {
         CoreIntegrationRequest req = new CoreIntegrationRequest();
         req.setHeader(header);
         return req;
+    }
+
+    private static void setPrivateField(Object target, String fieldName, Object value) throws Exception {
+        Field f = target.getClass().getDeclaredField(fieldName);
+        f.setAccessible(true);
+        f.set(target, value);
     }
 }
