@@ -1,76 +1,151 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
-    <modelVersion>4.0.0</modelVersion>
-    <parent>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.7</version>
-        <relativePath/> <!-- lookup parent from repository -->
-    </parent>
-    <groupId>com.example</groupId>
-    <artifactId>demo</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
-    <name>demo</name>
-    <description>demo</description>
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.avro.generic.GenericRecord;
+import org.apache.avro.specific.SpecificRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.slf4j.MDC;
+import org.springframework.stereotype.Component;
 
-    <properties>
-        <java.version>21</java.version>
-    </properties>
-    <dependencies>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.kafka</groupId>
-            <artifactId>spring-kafka</artifactId>
-        </dependency>
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
 
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <optional>true</optional>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.kafka</groupId>
-            <artifactId>spring-kafka-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-    </dependencies>
+@Component
+@RequiredArgsConstructor
+@Slf4j
+public class AlertConsumer {
 
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <configuration>
-                    <annotationProcessorPaths>
-                        <path>
-                            <groupId>org.projectlombok</groupId>
-                            <artifactId>lombok</artifactId>
-                        </path>
-                    </annotationProcessorPaths>
-                </configuration>
-            </plugin>
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-                <configuration>
-                    <excludes>
-                        <exclude>
-                            <groupId>org.projectlombok</groupId>
-                            <artifactId>lombok</artifactId>
-                        </exclude>
-                    </excludes>
-                </configuration>
-            </plugin>
-        </plugins>
-    </build>
+    private final ObjectMapper objectMapper;
+    private final AlertValidator alertValidator;
+    private final ValidationProperties validationProperties;
+    private final RequestBuilder requestBuilder;
+    private final OrchestratorExecutor executor;
 
-</project>
+    // This is your flag/setting - keep your existing way of determining format
+    // Example: from yaml: message.format=avro/json/auto
+    private final String messageFormat = "auto"; // replace with your real config injection
+
+    public void listen(ConsumerRecord<String, Object> rec) {
+
+        String messageKey = rec.key();
+        Object rawValue = rec.value();
+
+        try {
+            CoreIntegrationRequest request = decodeToRequest(rawValue, rec);
+
+            // ---- common validation + processing (runs once) ----
+            process(messageKey, request);
+
+        } catch (Exception exception) {
+            log.error("Failed to process Alert transaction messages. key={}, err={}",
+                    messageKey, exception.toString(), exception);
+        }
+    }
+
+    /**
+     * Converts Kafka record value (Avro or JSON) into CoreIntegrationRequest.
+     * Handles:
+     *  - Avro as SpecificRecord / GenericRecord
+     *  - JSON as String / byte[] / Map / already CoreIntegrationRequest
+     */
+    private CoreIntegrationRequest decodeToRequest(Object rawValue, ConsumerRecord<String, Object> rec) throws Exception {
+
+        if (rawValue == null) {
+            return null;
+        }
+
+        // If producer/deserializer already gives you the POJO, just use it.
+        if (rawValue instanceof CoreIntegrationRequest cir) {
+            return cir;
+        }
+
+        // If you configured KafkaAvroDeserializer, value may be SpecificRecord or GenericRecord
+        if (rawValue instanceof SpecificRecord || rawValue instanceof GenericRecord) {
+            // Convert Avro record -> Map -> POJO (no .toString() for bytes!)
+            // Works best if your CoreIntegrationRequest fields match Avro schema field names.
+            Map<String, Object> map = objectMapper.convertValue(rawValue, Map.class);
+            return objectMapper.convertValue(map, CoreIntegrationRequest.class);
+        }
+
+        // If you're consuming bytes (recommended for "mixed" payload topics)
+        if (rawValue instanceof byte[] bytes) {
+            // If you truly have Confluent wire-format Avro here, you should NOT treat it as JSON.
+            // But if your consumer isn't set up to decode Avro bytes, you can still separate by "magic byte".
+            if (looksLikeConfluentAvro(bytes) && shouldHandleAsAvro()) {
+                throw new IllegalStateException(
+                        "Record looks like Confluent Avro bytes but consumer is not configured to deserialize Avro. " +
+                        "Fix by using KafkaAvroDeserializer OR consume bytes and decode via Schema Registry.");
+            }
+            // JSON bytes
+            return objectMapper.readValue(bytes, CoreIntegrationRequest.class);
+        }
+
+        // JSON string payload
+        if (rawValue instanceof String s) {
+            return objectMapper.readValue(s, CoreIntegrationRequest.class);
+        }
+
+        // Sometimes Spring/Kafka gives LinkedHashMap if deserializer is JSON-to-Map
+        if (rawValue instanceof Map<?, ?> m) {
+            return objectMapper.convertValue(m, CoreIntegrationRequest.class);
+        }
+
+        // AUTO mode: last attempt (safe)
+        // If value is some POJO with getters matching JSON structure
+        if (!shouldHandleAsAvro()) {
+            return objectMapper.convertValue(rawValue, CoreIntegrationRequest.class);
+        }
+
+        throw new IllegalArgumentException("Unsupported message value type: " + rawValue.getClass());
+    }
+
+    private void process(String messageKey, CoreIntegrationRequest request) {
+
+        if (request == null || request.getHeader() == null) {
+            log.error("Invalid payload: request/header is null. key={}", messageKey);
+            return;
+        }
+
+        String operation = request.getHeader().getOperation();
+
+        if (!OperationType.CustomerAlert.name().equals(operation)) {
+            log.error("Invalid operation payload. key={}, operation={}", messageKey, operation);
+            return;
+        }
+
+        try (var ignored = MDC.putCloseable("X-Request-Id", request.getHeader().getRequestId())) {
+
+            log.info("Alert Kafka Listener processing for message key={} payload={}", messageKey, safeLog(request));
+
+            alertValidator.validate(request, validationProperties);
+
+            OrchestratedRequest orchestratedRequest = requestBuilder.prepareRequest(request);
+            executor.orchestrate(orchestratedRequest);
+        }
+    }
+
+    private boolean shouldHandleAsAvro() {
+        return "avro".equalsIgnoreCase(messageFormat);
+    }
+
+    /**
+     * Confluent Avro wire-format typically starts with magic byte 0, then 4-byte schema id.
+     */
+    private boolean looksLikeConfluentAvro(byte[] bytes) {
+        return bytes != null && bytes.length > 5 && bytes[0] == 0;
+    }
+
+    /**
+     * Prevent log injection / huge logs (and also keeps logs safe for CWE-117).
+     * Replace with your existing safe logging approach.
+     */
+    private String safeLog(Object obj) {
+        try {
+            // Keep it short; avoid dumping huge payloads
+            String s = objectMapper.writeValueAsString(obj);
+            return s.length() > 4000 ? s.substring(0, 4000) + "..." : s;
+        } catch (Exception e) {
+            return String.valueOf(obj);
+        }
+    }
+}
