@@ -1,151 +1,194 @@
-import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.apache.avro.generic.GenericRecord;
-import org.apache.avro.specific.SpecificRecord;
+limport com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.slf4j.MDC;
-import org.springframework.stereotype.Component;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
-@Component
-@RequiredArgsConstructor
-@Slf4j
-public class AlertConsumer {
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-    private final ObjectMapper objectMapper;
-    private final AlertValidator alertValidator;
-    private final ValidationProperties validationProperties;
-    private final RequestBuilder requestBuilder;
-    private final OrchestratorExecutor executor;
+@ExtendWith(MockitoExtension.class)
+class AlertConsumerTest {
 
-    // This is your flag/setting - keep your existing way of determining format
-    // Example: from yaml: message.format=avro/json/auto
-    private final String messageFormat = "auto"; // replace with your real config injection
+    private ObjectMapper objectMapper;
 
-    public void listen(ConsumerRecord<String, Object> rec) {
+    @Mock private AlertValidator alertValidator;
+    @Mock private ValidationProperties validationProperties;
+    @Mock private RequestBuilder requestBuilder;
+    @Mock private OrchestratorExecutor executor;
 
-        String messageKey = rec.key();
-        Object rawValue = rec.value();
+    private AlertConsumer consumer;
 
-        try {
-            CoreIntegrationRequest request = decodeToRequest(rawValue, rec);
+    @BeforeEach
+    void setup() {
+        objectMapper = new ObjectMapper();
 
-            // ---- common validation + processing (runs once) ----
-            process(messageKey, request);
-
-        } catch (Exception exception) {
-            log.error("Failed to process Alert transaction messages. key={}, err={}",
-                    messageKey, exception.toString(), exception);
-        }
+        // create consumer with real ObjectMapper + mocks
+        consumer = new AlertConsumer(
+                objectMapper,
+                alertValidator,
+                validationProperties,
+                requestBuilder,
+                executor
+        );
     }
 
-    /**
-     * Converts Kafka record value (Avro or JSON) into CoreIntegrationRequest.
-     * Handles:
-     *  - Avro as SpecificRecord / GenericRecord
-     *  - JSON as String / byte[] / Map / already CoreIntegrationRequest
-     */
-    private CoreIntegrationRequest decodeToRequest(Object rawValue, ConsumerRecord<String, Object> rec) throws Exception {
+    @Test
+    void listen_whenJsonStringValid_shouldValidateBuildAndOrchestrate() throws Exception {
+        // given
+        CoreIntegrationRequest req = buildRequest(OperationType.CustomerAlert.name(), "REQ-1");
+        String json = objectMapper.writeValueAsString(req);
 
-        if (rawValue == null) {
-            return null;
-        }
+        ConsumerRecord<String, Object> rec =
+                new ConsumerRecord<>("topic", 0, 10L, "k1", json);
 
-        // If producer/deserializer already gives you the POJO, just use it.
-        if (rawValue instanceof CoreIntegrationRequest cir) {
-            return cir;
-        }
+        OrchestratedRequest orchestrated = mock(OrchestratedRequest.class);
+        when(requestBuilder.prepareRequest(any(CoreIntegrationRequest.class))).thenReturn(orchestrated);
 
-        // If you configured KafkaAvroDeserializer, value may be SpecificRecord or GenericRecord
-        if (rawValue instanceof SpecificRecord || rawValue instanceof GenericRecord) {
-            // Convert Avro record -> Map -> POJO (no .toString() for bytes!)
-            // Works best if your CoreIntegrationRequest fields match Avro schema field names.
-            Map<String, Object> map = objectMapper.convertValue(rawValue, Map.class);
-            return objectMapper.convertValue(map, CoreIntegrationRequest.class);
-        }
+        // when
+        consumer.listen(rec);
 
-        // If you're consuming bytes (recommended for "mixed" payload topics)
-        if (rawValue instanceof byte[] bytes) {
-            // If you truly have Confluent wire-format Avro here, you should NOT treat it as JSON.
-            // But if your consumer isn't set up to decode Avro bytes, you can still separate by "magic byte".
-            if (looksLikeConfluentAvro(bytes) && shouldHandleAsAvro()) {
-                throw new IllegalStateException(
-                        "Record looks like Confluent Avro bytes but consumer is not configured to deserialize Avro. " +
-                        "Fix by using KafkaAvroDeserializer OR consume bytes and decode via Schema Registry.");
-            }
-            // JSON bytes
-            return objectMapper.readValue(bytes, CoreIntegrationRequest.class);
-        }
+        // then
+        ArgumentCaptor<CoreIntegrationRequest> captor = ArgumentCaptor.forClass(CoreIntegrationRequest.class);
+        verify(alertValidator, times(1)).validate(captor.capture(), eq(validationProperties));
+        assertEquals("REQ-1", captor.getValue().getHeader().getRequestId());
 
-        // JSON string payload
-        if (rawValue instanceof String s) {
-            return objectMapper.readValue(s, CoreIntegrationRequest.class);
-        }
-
-        // Sometimes Spring/Kafka gives LinkedHashMap if deserializer is JSON-to-Map
-        if (rawValue instanceof Map<?, ?> m) {
-            return objectMapper.convertValue(m, CoreIntegrationRequest.class);
-        }
-
-        // AUTO mode: last attempt (safe)
-        // If value is some POJO with getters matching JSON structure
-        if (!shouldHandleAsAvro()) {
-            return objectMapper.convertValue(rawValue, CoreIntegrationRequest.class);
-        }
-
-        throw new IllegalArgumentException("Unsupported message value type: " + rawValue.getClass());
+        verify(requestBuilder, times(1)).prepareRequest(any(CoreIntegrationRequest.class));
+        verify(executor, times(1)).orchestrate(orchestrated);
+        verifyNoMoreInteractions(executor);
     }
 
-    private void process(String messageKey, CoreIntegrationRequest request) {
+    @Test
+    void listen_whenAlreadyCoreIntegrationRequest_shouldProcessWithoutJsonParse() {
+        // given
+        CoreIntegrationRequest req = buildRequest(OperationType.CustomerAlert.name(), "REQ-2");
 
-        if (request == null || request.getHeader() == null) {
-            log.error("Invalid payload: request/header is null. key={}", messageKey);
-            return;
-        }
+        ConsumerRecord<String, Object> rec =
+                new ConsumerRecord<>("topic", 0, 11L, "k2", req);
 
-        String operation = request.getHeader().getOperation();
+        OrchestratedRequest orchestrated = mock(OrchestratedRequest.class);
+        when(requestBuilder.prepareRequest(any(CoreIntegrationRequest.class))).thenReturn(orchestrated);
 
-        if (!OperationType.CustomerAlert.name().equals(operation)) {
-            log.error("Invalid operation payload. key={}, operation={}", messageKey, operation);
-            return;
-        }
+        // when
+        consumer.listen(rec);
 
-        try (var ignored = MDC.putCloseable("X-Request-Id", request.getHeader().getRequestId())) {
-
-            log.info("Alert Kafka Listener processing for message key={} payload={}", messageKey, safeLog(request));
-
-            alertValidator.validate(request, validationProperties);
-
-            OrchestratedRequest orchestratedRequest = requestBuilder.prepareRequest(request);
-            executor.orchestrate(orchestratedRequest);
-        }
+        // then
+        verify(alertValidator, times(1)).validate(any(CoreIntegrationRequest.class), eq(validationProperties));
+        verify(requestBuilder, times(1)).prepareRequest(any(CoreIntegrationRequest.class));
+        verify(executor, times(1)).orchestrate(orchestrated);
     }
 
-    private boolean shouldHandleAsAvro() {
-        return "avro".equalsIgnoreCase(messageFormat);
+    @Test
+    void listen_whenMapPayload_shouldConvertAndProcess() {
+        // given (Map simulates LinkedHashMap from some JSON deserializer)
+        Map<String, Object> header = new LinkedHashMap<>();
+        header.put("operation", OperationType.CustomerAlert.name());
+        header.put("requestId", "REQ-3");
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("header", header);
+
+        ConsumerRecord<String, Object> rec =
+                new ConsumerRecord<>("topic", 0, 12L, "k3", body);
+
+        OrchestratedRequest orchestrated = mock(OrchestratedRequest.class);
+        when(requestBuilder.prepareRequest(any(CoreIntegrationRequest.class))).thenReturn(orchestrated);
+
+        // when
+        consumer.listen(rec);
+
+        // then
+        verify(alertValidator, times(1)).validate(any(CoreIntegrationRequest.class), eq(validationProperties));
+        verify(executor, times(1)).orchestrate(orchestrated);
     }
 
-    /**
-     * Confluent Avro wire-format typically starts with magic byte 0, then 4-byte schema id.
-     */
-    private boolean looksLikeConfluentAvro(byte[] bytes) {
-        return bytes != null && bytes.length > 5 && bytes[0] == 0;
+    @Test
+    void listen_whenInvalidOperation_shouldNotOrchestrate() {
+        // given
+        CoreIntegrationRequest req = buildRequest("SomeOtherOperation", "REQ-4");
+
+        ConsumerRecord<String, Object> rec =
+                new ConsumerRecord<>("topic", 0, 13L, "k4", req);
+
+        // when
+        consumer.listen(rec);
+
+        // then
+        verifyNoInteractions(alertValidator);
+        verifyNoInteractions(requestBuilder);
+        verifyNoInteractions(executor);
     }
 
-    /**
-     * Prevent log injection / huge logs (and also keeps logs safe for CWE-117).
-     * Replace with your existing safe logging approach.
-     */
-    private String safeLog(Object obj) {
-        try {
-            // Keep it short; avoid dumping huge payloads
-            String s = objectMapper.writeValueAsString(obj);
-            return s.length() > 4000 ? s.substring(0, 4000) + "..." : s;
-        } catch (Exception e) {
-            return String.valueOf(obj);
-        }
+    @Test
+    void listen_whenHeaderNull_shouldNotOrchestrate() {
+        // given
+        CoreIntegrationRequest req = new CoreIntegrationRequest();
+        req.setHeader(null);
+
+        ConsumerRecord<String, Object> rec =
+                new ConsumerRecord<>("topic", 0, 14L, "k5", req);
+
+        // when
+        consumer.listen(rec);
+
+        // then
+        verifyNoInteractions(alertValidator);
+        verifyNoInteractions(requestBuilder);
+        verifyNoInteractions(executor);
+    }
+
+    @Test
+    void listen_whenBadJson_shouldNotOrchestrateAndNotThrow() {
+        // given
+        String badJson = "{not-valid-json";
+
+        ConsumerRecord<String, Object> rec =
+                new ConsumerRecord<>("topic", 0, 15L, "k6", badJson);
+
+        // when / then (should not throw)
+        assertDoesNotThrow(() -> consumer.listen(rec));
+
+        verifyNoInteractions(alertValidator);
+        verifyNoInteractions(requestBuilder);
+        verifyNoInteractions(executor);
+    }
+
+    @Test
+    void listen_whenJsonBytesValid_shouldProcess() throws Exception {
+        // given
+        CoreIntegrationRequest req = buildRequest(OperationType.CustomerAlert.name(), "REQ-7");
+        byte[] bytes = objectMapper.writeValueAsBytes(req);
+
+        ConsumerRecord<String, Object> rec =
+                new ConsumerRecord<>("topic", 0, 16L, "k7", bytes);
+
+        OrchestratedRequest orchestrated = mock(OrchestratedRequest.class);
+        when(requestBuilder.prepareRequest(any(CoreIntegrationRequest.class))).thenReturn(orchestrated);
+
+        // when
+        consumer.listen(rec);
+
+        // then
+        verify(alertValidator, times(1)).validate(any(CoreIntegrationRequest.class), eq(validationProperties));
+        verify(executor, times(1)).orchestrate(orchestrated);
+    }
+
+    // ---------------- helpers ----------------
+
+    private CoreIntegrationRequest buildRequest(String operation, String requestId) {
+        Header header = new Header();
+        header.setOperation(operation);
+        header.setRequestId(requestId);
+
+        CoreIntegrationRequest req = new CoreIntegrationRequest();
+        req.setHeader(header);
+        return req;
     }
 }
