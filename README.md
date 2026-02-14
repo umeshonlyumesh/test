@@ -1,244 +1,142 @@
-# 🧩 Kafka SDK for Spring Boot
+import org.apache.kafka.common.errors.TimeoutException;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
-**Kafka SDK** is a reusable, production-grade library designed to simplify Kafka integration across microservices.  
-It provides **plug-and-play producer and consumer support**, **automatic topic creation**, **SSL configuration**, and **DLQ with retry** — all driven by Spring Boot `application.yml` configuration.
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
----
+import static org.junit.jupiter.api.Assertions.*;
 
-## 🚀 Features
+class AsyncRetryTest {
 
-✅ Simplified producer (sync / async send)  
-✅ Custom `@KafkaConsumerListener` annotation with virtual thread consumers  
-✅ Automatic topic creation if missing  
-✅ Configurable SSL for producer and consumer  
-✅ Built-in retry and DLQ handling  
-✅ Micrometer metrics integration  
-✅ Auto-configuration via Spring Boot starter mechanism  
+  private ScheduledExecutorService scheduler;
+  private AsyncRetry asyncRetry;
 
----
+  @BeforeEach
+  void setUp() {
+    scheduler = Executors.newSingleThreadScheduledExecutor();
+    asyncRetry = new AsyncRetry(scheduler);
+  }
 
-## 🧱 Project Modules
+  @AfterEach
+  void tearDown() {
+    scheduler.shutdownNow();
+  }
 
-```
-kafka-sdk/
- ├── src/main/java/com/truist/kafka/
- │     ├── config/               → Auto-configuration & properties
- │     ├── producer/             → Producer client with retry/DLQ
- │     ├── consumer/             → Annotation-based listener support
- │     ├── admin/                → KafkaTopicManager (auto-create topics)
- │     └── metrics/              → Micrometer integration
- └── pom.xml
-```
+  @Test
+  void retryAsync_successOnFirstAttempt_completesNormally() throws Exception {
+    CompletableFuture<String> cf = asyncRetry.retryAsync(
+        () -> CompletableFuture.completedFuture("OK"),
+        3,
+        10
+    );
 
----
+    assertEquals("OK", cf.get(1, TimeUnit.SECONDS));
+  }
 
-## ⚙️ Installation
+  @Test
+  void retryAsync_retriableFailureThenSuccess_retriesAndCompletes() throws Exception {
+    AtomicInteger attempts = new AtomicInteger(0);
 
-### 1️⃣ Publish to Internal Maven Repository (e.g. Nexus)
+    CompletableFuture<String> cf = asyncRetry.retryAsync(
+        () -> {
+          int n = attempts.incrementAndGet();
+          if (n < 3) {
+            CompletableFuture<String> fail = new CompletableFuture<>();
+            fail.completeExceptionally(new TimeoutException("temporary"));
+            return fail;
+          }
+          return CompletableFuture.completedFuture("OK_AFTER_RETRY");
+        },
+        5,
+        10
+    );
 
-Run:
-```bash
-mvn clean install
-```
+    assertEquals("OK_AFTER_RETRY", cf.get(2, TimeUnit.SECONDS));
+    assertEquals(3, attempts.get(), "Should attempt exactly 3 times");
+  }
 
-Then publish:
-```bash
-mvn deploy
-```
+  @Test
+  void retryAsync_nonRetriableFailure_doesNotRetry_completesExceptionally() {
+    AtomicInteger attempts = new AtomicInteger(0);
 
-Once deployed, any microservice can consume the SDK via Maven:
+    CompletableFuture<String> cf = asyncRetry.retryAsync(
+        () -> {
+          attempts.incrementAndGet();
+          CompletableFuture<String> fail = new CompletableFuture<>();
+          fail.completeExceptionally(new IllegalArgumentException("bad payload"));
+          return fail;
+        },
+        5,
+        10
+    );
 
-```xml
-<dependency>
-  <groupId>com.truist.kafka</groupId>
-  <artifactId>kafka-sdk</artifactId>
-  <version>1.0.0</version>
-</dependency>
-```
+    ExecutionException ee = assertThrows(ExecutionException.class, () -> cf.get(1, TimeUnit.SECONDS));
+    assertTrue(ee.getCause() instanceof IllegalArgumentException);
+    assertEquals(1, attempts.get(), "Should not retry non-retriable exception");
+  }
 
----
+  @Test
+  void retryAsync_maxAttemptsReached_completesExceptionally() {
+    AtomicInteger attempts = new AtomicInteger(0);
 
-## 🧩 Configuration (application.yml)
+    CompletableFuture<String> cf = asyncRetry.retryAsync(
+        () -> {
+          attempts.incrementAndGet();
+          CompletableFuture<String> fail = new CompletableFuture<>();
+          fail.completeExceptionally(new TimeoutException("still down"));
+          return fail;
+        },
+        3,
+        10
+    );
 
-```yaml
-kafka:
-  sdk:
-    bootstrap-servers: kafka.dev.truist.com:443
-    auto-create-topics: true
+    ExecutionException ee = assertThrows(ExecutionException.class, () -> cf.get(2, TimeUnit.SECONDS));
+    // Depending on how CompletionException is wrapped, cause may be TimeoutException or CompletionException
+    Throwable cause = ee.getCause() instanceof CompletionException ? ee.getCause().getCause() : ee.getCause();
+    assertTrue(cause instanceof TimeoutException);
+    assertEquals(3, attempts.get(), "Should retry exactly maxAttempts times");
+  }
 
-    producer:
-      ssl:
-        key-store-type: PKCS12
-        key-store-location: classpath:cert/pezkafkakeystore.p12
-        key-store-password: Zelledisbursment12$
-        trust-store-type: PKCS12
-        trust-store-location: classpath:cert/pezkafkatruststore.p12
-        trust-store-password: Zelledisbursment12$
+  @Test
+  void retryAsync_actionCallableThrows_completesExceptionallyImmediately() {
+    AtomicInteger attempts = new AtomicInteger(0);
 
-    consumer:
-      default-group-id: default-group
-      ssl:
-        key-store-type: PKCS12
-        key-store-location: classpath:cert/pezkafkakeystore.p12
-        key-store-password: Zelledisbursment12$
-        trust-store-type: PKCS12
-        trust-store-location: classpath:cert/pezkafkatruststore.p12
-        trust-store-password: Zelledisbursment12$
+    CompletableFuture<String> cf = asyncRetry.retryAsync(
+        () -> {
+          attempts.incrementAndGet();
+          throw new RuntimeException("boom");
+        },
+        5,
+        10
+    );
 
-    dlq:
-      enabled: true
-      topic-override: my-dlq-topic
+    ExecutionException ee = assertThrows(ExecutionException.class, () -> cf.get(1, TimeUnit.SECONDS));
+    assertTrue(ee.getCause() instanceof RuntimeException);
+    assertEquals("boom", ee.getCause().getMessage());
+    assertEquals(1, attempts.get(), "Callable throws before returning future -> no retries");
+  }
 
-    retry:
-      max-attempts: 5
-      backoff-ms: 1500
-```
+  @Test
+  void retryAsync_retriableWrappedInCompletionException_shouldRetry() throws Exception {
+    AtomicInteger attempts = new AtomicInteger(0);
 
----
+    CompletableFuture<String> cf = asyncRetry.retryAsync(
+        () -> {
+          int n = attempts.incrementAndGet();
+          if (n == 1) {
+            CompletableFuture<String> fail = new CompletableFuture<>();
+            fail.completeExceptionally(new CompletionException(new TimeoutException("wrapped")));
+            return fail;
+          }
+          return CompletableFuture.completedFuture("OK");
+        },
+        3,
+        10
+    );
 
-## 🧩 Producer Usage
-
-```java
-@Service
-@RequiredArgsConstructor
-public class PaymentPublisher {
-    private final KafkaProducerClient producer;
-
-    public void publishPayment(String id, String payload) {
-        producer.sendAsync("payments-topic", id, payload);
-    }
+    assertEquals("OK", cf.get(2, TimeUnit.SECONDS));
+    assertEquals(2, attempts.get());
+  }
 }
-```
-
-```java
-producer.sendSync("audit-topic", "txn123", "{\"status\":\"APPROVED\"}");
-```
-
-> Both methods internally handle retries, error counting, and DLQ fallback if configured.
-
----
-
-## 🧩 Consumer Usage
-
-```java
-@Component
-public class PaymentConsumer {
-
-    @KafkaConsumerListener(topic = "payments-topic", groupId = "payments-group")
-    public void onMessage(ConsumerRecord<String, String> record) {
-        System.out.println("✅ Received payment event: " + record.value());
-    }
-}
-```
-
----
-
-## 🧩 Topic Management
-
-```java
-@Service
-@RequiredArgsConstructor
-public class TopicInitializer {
-    private final KafkaTopicManager topicManager;
-
-    @PostConstruct
-    public void setupTopics() {
-        topicManager.createTopicIfNotExists("payments-topic", 3, (short) 1);
-        topicManager.createTopicIfNotExists("audit-topic", 2, (short) 1);
-    }
-}
-```
-
----
-
-## 🧩 Metrics Integration
-
-Metrics are automatically registered in Micrometer under:
-- `kafka.sdk.producer.send.count`
-- `kafka.sdk.producer.error.count`
-- `kafka.sdk.producer.send.timer`
-
-They appear at:
-```
-/actuator/metrics
-/actuator/prometheus
-```
-
----
-
-## 🧩 Error Handling and DLQ
-
-If message send fails permanently after all retries,  
-the SDK publishes the failed message to the configured **DLQ topic**.
-
-```yaml
-kafka:
-  sdk:
-    dlq:
-      enabled: true
-      topic-override: payment-failed-dlq
-```
-
----
-
-## 🧩 Retry Configuration
-
-```yaml
-kafka:
-  sdk:
-    retry:
-      max-attempts: 5
-      backoff-ms: 1000
-```
-
----
-
-## 🧩 SSL Configuration Example
-
-```yaml
-kafka:
-  sdk:
-    producer:
-      ssl:
-        key-store-type: PKCS12
-        key-store-location: file:/opt/cert/kafka-producer-keystore.p12
-        key-store-password: changeit
-        trust-store-location: file:/opt/cert/kafka-producer-truststore.p12
-        trust-store-password: changeit
-```
-
----
-
-## 🧩 End-to-End Setup
-
-1️⃣ Add SDK dependency  
-2️⃣ Add YAML configuration  
-3️⃣ Create Producer + Consumer classes  
-4️⃣ Run the application 🎉  
-
----
-
-## 🧩 Logging
-
-```yaml
-logging:
-  level:
-    com.truist.kafka: DEBUG
-```
-
----
-
-## 🧩 Extensibility
-
-| Feature | How to extend |
-|----------|---------------|
-| Topic creation policy | Extend `KafkaTopicManager` |
-| Retry backoff | Override `props.getRetry()` |
-| Metrics registry | Autowire `MeterRegistry` |
-| Listener concurrency | Adjust virtual thread pool |
-
----
-
-## 🧩 License
-Internal use only © Truist Bank / IBM – Kafka SDK Starter  
-Version 1.0.0
