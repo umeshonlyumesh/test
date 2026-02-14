@@ -1,236 +1,51 @@
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
+import java.time.Duration;
+import java.util.concurrent.*;
 
-import java.lang.reflect.Field;
-import java.util.LinkedHashMap;
-import java.util.Map;
+public class AsyncRetry {
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.mockito.Mockito.*;
+  private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
 
-@ExtendWith(MockitoExtension.class)
-class AlertConsumerTest {
+  public <T> CompletableFuture<T> retryAsync(
+      Callable<CompletableFuture<T>> action,
+      int maxAttempts,
+      long baseDelayMs
+  ) {
+    CompletableFuture<T> promise = new CompletableFuture<>();
+    attempt(action, maxAttempts, 1, baseDelayMs, promise);
+    return promise;
+  }
 
-    private ObjectMapper objectMapper;
-
-    @Mock private AlertExecutor executor;
-    @Mock private ValidationProperties validationProperties;
-
-    // IMPORTANT: Your code calls these as static methods:
-    // AlertValidator.validate(request, validationProperties)
-    // RequestBuilder.prepareRequest(request)
-    //
-    // To unit test without changing your production code,
-    // Mockito needs "mockito-inline" to mock static methods.
-    //
-    // If you don't want static mocking, I can refactor your class to use injected beans.
-    //
-    // For now, tests below use static mocking (production code unchanged).
-
-    private AlertConsumer consumer;
-
-    @BeforeEach
-    void setup() throws Exception {
-        objectMapper = new ObjectMapper();
-
-        // Your constructor likely comes from Lombok @RequiredArgsConstructor
-        consumer = new AlertConsumer(objectMapper, executor, validationProperties);
-
-        // set @Value injected field: messageFormat
-        setPrivateField(consumer, "messageFormat", "json"); // default to json for most tests
-    }
-
-    @Test
-    void listen_whenJsonStringValid_shouldValidateBuildAndOrchestrate() throws Exception {
-        // given
-        CoreIntegrationRequest req = buildRequest(OperationType.CustomerAlert.name(), "RID-1");
-        String json = objectMapper.writeValueAsString(req);
-
-        ConsumerRecord<String, Object> rec =
-                new ConsumerRecord<>("t", 0, 1L, "k1", json);
-
-        OrchestratedRequest orchestrated = mock(OrchestratedRequest.class);
-
-        try (var validatorMock = mockStatic(AlertValidator.class);
-             var builderMock = mockStatic(RequestBuilder.class)) {
-
-            builderMock.when(() -> RequestBuilder.prepareRequest(any(CoreIntegrationRequest.class)))
-                    .thenReturn(orchestrated);
-
-            // when
-            consumer.listen(rec);
-
-            // then
-            validatorMock.verify(() -> AlertValidator.validate(any(CoreIntegrationRequest.class), eq(validationProperties)), times(1));
-            builderMock.verify(() -> RequestBuilder.prepareRequest(any(CoreIntegrationRequest.class)), times(1));
-            verify(executor, times(1)).orchestrate(orchestrated);
+  private <T> void attempt(Callable<CompletableFuture<T>> action,
+                           int maxAttempts,
+                           int attempt,
+                           long baseDelayMs,
+                           CompletableFuture<T> promise) {
+    try {
+      action.call().whenComplete((res, ex) -> {
+        if (ex == null) {
+          promise.complete(res);
+          return;
         }
-    }
 
-    @Test
-    void listen_whenValueAlreadyCoreIntegrationRequest_shouldProcess() {
-        // given
-        CoreIntegrationRequest req = buildRequest(OperationType.CustomerAlert.name(), "RID-2");
-
-        ConsumerRecord<String, Object> rec =
-                new ConsumerRecord<>("t", 0, 2L, "k2", req);
-
-        OrchestratedRequest orchestrated = mock(OrchestratedRequest.class);
-
-        try (var validatorMock = mockStatic(AlertValidator.class);
-             var builderMock = mockStatic(RequestBuilder.class)) {
-
-            builderMock.when(() -> RequestBuilder.prepareRequest(any(CoreIntegrationRequest.class)))
-                    .thenReturn(orchestrated);
-
-            // when
-            consumer.listen(rec);
-
-            // then
-            validatorMock.verify(() -> AlertValidator.validate(any(CoreIntegrationRequest.class), eq(validationProperties)), times(1));
-            verify(executor, times(1)).orchestrate(orchestrated);
+        if (attempt >= maxAttempts || !isRetriable(ex)) {
+          promise.completeExceptionally(ex);
+          return;
         }
+
+        long delay = baseDelayMs * (1L << (attempt - 1)); // 500, 1000, 2000...
+        scheduler.schedule(() -> attempt(action, maxAttempts, attempt + 1, baseDelayMs, promise),
+            delay, TimeUnit.MILLISECONDS);
+      });
+    } catch (Exception e) {
+      promise.completeExceptionally(e);
     }
+  }
 
-    @Test
-    void listen_whenJsonMap_shouldConvertAndProcess() {
-        // given
-        Map<String, Object> header = new LinkedHashMap<>();
-        header.put("operation", OperationType.CustomerAlert.name());
-        header.put("requestId", "RID-3");
-
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("header", header);
-
-        ConsumerRecord<String, Object> rec =
-                new ConsumerRecord<>("t", 0, 3L, "k3", payload);
-
-        OrchestratedRequest orchestrated = mock(OrchestratedRequest.class);
-
-        try (var validatorMock = mockStatic(AlertValidator.class);
-             var builderMock = mockStatic(RequestBuilder.class)) {
-
-            builderMock.when(() -> RequestBuilder.prepareRequest(any(CoreIntegrationRequest.class)))
-                    .thenReturn(orchestrated);
-
-            // when
-            consumer.listen(rec);
-
-            // then
-            validatorMock.verify(() -> AlertValidator.validate(any(CoreIntegrationRequest.class), eq(validationProperties)), times(1));
-            verify(executor, times(1)).orchestrate(orchestrated);
-        }
-    }
-
-    @Test
-    void listen_whenJsonBytesValid_shouldProcess() throws Exception {
-        // given
-        CoreIntegrationRequest req = buildRequest(OperationType.CustomerAlert.name(), "RID-4");
-        byte[] bytes = objectMapper.writeValueAsBytes(req);
-
-        ConsumerRecord<String, Object> rec =
-                new ConsumerRecord<>("t", 0, 4L, "k4", bytes);
-
-        OrchestratedRequest orchestrated = mock(OrchestratedRequest.class);
-
-        try (var validatorMock = mockStatic(AlertValidator.class);
-             var builderMock = mockStatic(RequestBuilder.class)) {
-
-            builderMock.when(() -> RequestBuilder.prepareRequest(any(CoreIntegrationRequest.class)))
-                    .thenReturn(orchestrated);
-
-            // when
-            consumer.listen(rec);
-
-            // then
-            validatorMock.verify(() -> AlertValidator.validate(any(CoreIntegrationRequest.class), eq(validationProperties)), times(1));
-            verify(executor, times(1)).orchestrate(orchestrated);
-        }
-    }
-
-    @Test
-    void listen_whenInvalidOperation_shouldNotValidateOrOrchestrate() {
-        // given
-        CoreIntegrationRequest req = buildRequest("SomeOtherOperation", "RID-5");
-
-        ConsumerRecord<String, Object> rec =
-                new ConsumerRecord<>("t", 0, 5L, "k5", req);
-
-        try (var validatorMock = mockStatic(AlertValidator.class);
-             var builderMock = mockStatic(RequestBuilder.class)) {
-
-            // when
-            consumer.listen(rec);
-
-            // then
-            validatorMock.verifyNoInteractions();
-            builderMock.verifyNoInteractions();
-            verifyNoInteractions(executor);
-        }
-    }
-
-    @Test
-    void listen_whenHeaderNull_shouldNotValidateOrOrchestrate() {
-        // given
-        CoreIntegrationRequest req = new CoreIntegrationRequest();
-        req.setHeader(null);
-
-        ConsumerRecord<String, Object> rec =
-                new ConsumerRecord<>("t", 0, 6L, "k6", req);
-
-        try (var validatorMock = mockStatic(AlertValidator.class);
-             var builderMock = mockStatic(RequestBuilder.class)) {
-
-            // when
-            consumer.listen(rec);
-
-            // then
-            validatorMock.verifyNoInteractions();
-            builderMock.verifyNoInteractions();
-            verifyNoInteractions(executor);
-        }
-    }
-
-    @Test
-    void listen_whenBadJsonString_shouldNotThrow_andNotOrchestrate() {
-        // given
-        ConsumerRecord<String, Object> rec =
-                new ConsumerRecord<>("t", 0, 7L, "k7", "{bad-json");
-
-        try (var validatorMock = mockStatic(AlertValidator.class);
-             var builderMock = mockStatic(RequestBuilder.class)) {
-
-            // when/then
-            assertDoesNotThrow(() -> consumer.listen(rec));
-
-            // then
-            validatorMock.verifyNoInteractions();
-            builderMock.verifyNoInteractions();
-            verifyNoInteractions(executor);
-        }
-    }
-
-    // ---------------- helpers ----------------
-
-    private CoreIntegrationRequest buildRequest(String operation, String requestId) {
-        Header header = new Header();
-        header.setOperation(operation);
-        header.setRequestId(requestId);
-
-        CoreIntegrationRequest req = new CoreIntegrationRequest();
-        req.setHeader(header);
-        return req;
-    }
-
-    private static void setPrivateField(Object target, String fieldName, Object value) throws Exception {
-        Field f = target.getClass().getDeclaredField(fieldName);
-        f.setAccessible(true);
-        f.set(target, value);
-    }
+  private boolean isRetriable(Throwable ex) {
+    Throwable root = ex instanceof CompletionException ? ex.getCause() : ex;
+    return root instanceof org.apache.kafka.common.errors.TimeoutException
+        || root instanceof org.apache.kafka.common.errors.NetworkException
+        || root instanceof org.apache.kafka.common.errors.NotLeaderOrFollowerException
+        || root instanceof org.apache.kafka.common.errors.LeaderNotAvailableException;
+  }
 }
