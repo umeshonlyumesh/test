@@ -1,125 +1,56 @@
-<div class="container">
-  <div class="chart-card" *ngIf="chartOptionsByType">
-    <h2>By Type</h2>
-    <apx-chart
-      [series]="chartOptionsByType.series"
-      [chart]="chartOptionsByType.chart"
-      [xaxis]="chartOptionsByType.xaxis"
-      [dataLabels]="chartOptionsByType.dataLabels"
-      [stroke]="chartOptionsByType.stroke"
-      [title]="chartOptionsByType.title"
-      [legend]="chartOptionsByType.legend"
-    ></apx-chart>
-  </div>
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.common.errors.*;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Recover;
+import org.springframework.retry.annotation.Retryable;
+import org.springframework.stereotype.Service;
 
-  <div class="chart-card" *ngIf="chartOptionsByEntityType">
-    <h2>By Entity Type</h2>
-    <apx-chart
-      [series]="chartOptionsByEntityType.series"
-      [chart]="chartOptionsByEntityType.chart"
-      [xaxis]="chartOptionsByEntityType.xaxis"
-      [dataLabels]="chartOptionsByEntityType.dataLabels"
-      [stroke]="chartOptionsByEntityType.stroke"
-      [title]="chartOptionsByEntityType.title"
-      [legend]="chartOptionsByEntityType.legend"
-    ></apx-chart>
-  </div>
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class RetryableKafkaClient {
 
-  <div class="chart-card" *ngIf="chartOptionsByCurrentState">
-    <h2>By Current State</h2>
-    <apx-chart
-      [series]="chartOptionsByCurrentState.series"
-      [chart]="chartOptionsByCurrentState.chart"
-      [xaxis]="chartOptionsByCurrentState.xaxis"
-      [dataLabels]="chartOptionsByCurrentState.dataLabels"
-      [stroke]="chartOptionsByCurrentState.stroke"
-      [title]="chartOptionsByCurrentState.title"
-      [legend]="chartOptionsByCurrentState.legend"
-    ></apx-chart>
-  </div>
-</div>
+    private final KafkaTemplate<String, Object> kafkaTemplate;
 
+    @Retryable(
+        retryFor = {
+            TimeoutException.class,
+            NetworkException.class,
+            NotLeaderOrFollowerException.class,
+            LeaderNotAvailableException.class
+        },
+        maxAttempts = 3,
+        backoff = @Backoff(
+                delay = 500,
+                multiplier = 2.0,
+                maxDelay = 5000
+        )
+    )
+    public SendResult<String, Object> sendWithRetry(String topic, String key, Object payload) throws Exception {
 
-  ///////////
+        log.info("Attempting to send message to topic={}, key={}", topic, key);
 
-  .container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 2rem;
-  display: flex;
-  flex-direction: column;
-  gap: 2rem;
-}
-
-.chart-card {
-  background-color: #ffffff;
-  border-radius: 16px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-  padding: 2rem;
-  transition: transform 0.2s ease-in-out;
-  border-top: 5px solid #2d1a47; /* Truist Purple */
-}
-
-.chart-card:hover {
-  transform: scale(1.01);
-}
-
-.chart-card h2 {
-  text-align: center;
-  margin-bottom: 1.5rem;
-  font-size: 1.5rem;
-  color: #2d1a47; /* Truist Purple */
-}
-
-/////
-
-body {
-  margin: 0;
-  font-family: "Segoe UI", sans-serif;
-  background-color: #f3f4f6;
-}
-
-//////////////////////
-
-this.chartOptions = {
-  series: [...],
-  chart: {
-    height: 400,
-    type: 'line',
-    zoom: {
-      enabled: true,
-      type: 'x',
-      autoScaleYaxis: true
-    },
-    toolbar: {
-      show: true,
-      autoSelected: 'zoom',
-      tools: {
-        download: true,
-        selection: true,
-        zoom: true,
-        zoomin: true,
-        zoomout: true,
-        pan: true,
-        reset: true
-      }
+        // sync so retry can catch exception
+        return kafkaTemplate.send(topic, key, payload).get();
     }
-  },
-  colors: ['#2d1a47', '#8A0025', '#004C97'], // Truist Purple, BB&T Burgundy, SunTrust Blue
-  dataLabels: {
-    enabled: false
-  },
-  stroke: {
-    curve: 'smooth'
-  },
-  title: {
-    text: 'Your Chart Title',
-    align: 'left'
-  },
-  xaxis: {
-    categories: [...]
-  },
-  legend: {
-    position: 'top'
-  }
-};
+
+    /**
+     * Called when maxAttempts exhausted
+     */
+    @Recover
+    public SendResult<String, Object> recover(Exception ex, String topic, String key, Object payload) {
+
+        log.error("Kafka send failed after retries topic={}, key={}", topic, key, ex);
+
+        // you can:
+        // - send to DLQ
+        // - store in DB
+        // - alert
+        // - throw custom exception
+
+        throw new RuntimeException("Kafka send permanently failed", ex);
+    }
+}
