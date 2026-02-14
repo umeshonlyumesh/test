@@ -1,56 +1,57 @@
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.apache.kafka.common.errors.*;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.support.SendResult;
-import org.springframework.retry.annotation.Backoff;
-import org.springframework.retry.annotation.Recover;
-import org.springframework.retry.annotation.Retryable;
-import org.springframework.stereotype.Service;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.common.errors.SerializationException;
+import org.springframework.kafka.listener.ConsumerRecordRecoverer;
+import org.springframework.kafka.support.serializer.DeserializationException;
 
-@Service
-@RequiredArgsConstructor
-@Slf4j
-public class RetryableKafkaClient {
+import java.util.Objects;
 
-    private final KafkaTemplate<String, Object> kafkaTemplate;
+public class NotifyingRecoverer implements ConsumerRecordRecoverer {
 
-    @Retryable(
-        retryFor = {
-            TimeoutException.class,
-            NetworkException.class,
-            NotLeaderOrFollowerException.class,
-            LeaderNotAvailableException.class
-        },
-        maxAttempts = 3,
-        backoff = @Backoff(
-                delay = 500,
-                multiplier = 2.0,
-                maxDelay = 5000
-        )
-    )
-    public SendResult<String, Object> sendWithRetry(String topic, String key, Object payload) throws Exception {
+    private final ConsumerRecordRecoverer delegate;
+    private final KafkaSdkProperties props;
+    private final SdkNotifier notifier;
 
-        log.info("Attempting to send message to topic={}, key={}", topic, key);
-
-        // sync so retry can catch exception
-        return kafkaTemplate.send(topic, key, payload).get();
+    public NotifyingRecoverer(ConsumerRecordRecoverer delegate, KafkaSdkProperties props, SdkNotifier notifier) {
+        this.delegate = Objects.requireNonNull(delegate);
+        this.props = Objects.requireNonNull(props);
+        this.notifier = Objects.requireNonNull(notifier);
     }
 
-    /**
-     * Called when maxAttempts exhausted
-     */
-    @Recover
-    public SendResult<String, Object> recover(Exception ex, String topic, String key, Object payload) {
+    @Override
+    public void accept(ConsumerRecord<?, ?> record, Exception exception) {
+        // record should NOT be null here for record-level recovery; but guard anyway
+        if (record == null) {
+            notifier.onBadPayload(null, exception);
+            return;
+        }
 
-        log.error("Kafka send failed after retries topic={}, key={}", topic, key, ex);
+        Throwable root = rootCause(exception);
 
-        // you can:
-        // - send to DLQ
-        // - store in DB
-        // - alert
-        // - throw custom exception
+        if (isBadPayload(root)) {
+            notifier.onBadPayload(record, exception);
+            // If you want to SKIP instead of DLT, return here.
+            // If you want DLT + notify, fall through to delegate.
+        }
 
-        throw new RuntimeException("Kafka send permanently failed", ex);
+        try {
+            delegate.accept(record, exception);
+        } catch (Exception publishEx) {
+            notifier.onDlqPublishFailed(record, exception, publishEx);
+            // do NOT throw endlessly
+        }
+    }
+
+    private boolean isBadPayload(Throwable t) {
+        return t instanceof DeserializationException
+                || t instanceof SerializationException
+                || (t != null && t.getMessage() != null && t.getMessage().contains("Unknown magic byte"));
+    }
+
+    private Throwable rootCause(Throwable t) {
+        Throwable cur = t;
+        while (cur.getCause() != null && cur.getCause() != cur) {
+            cur = cur.getCause();
+        }
+        return cur;
     }
 }
