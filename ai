@@ -1,60 +1,46 @@
-import java.util.concurrent.*;
+@Bean
+@ConditionalOnMissingBean(name = "kafkaSdkConsumerFactory")
+public ConsumerFactory<String, Object> kafkaSdkConsumerFactory() {
 
-public class AsyncRetry {
+    Map<String, Object> config = new HashMap<>();
 
-  private final ScheduledExecutorService scheduler;
+    config.put(CommonClientConfigs.SECURITY_PROTOCOL_CONFIG, "SSL");
+    config.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, props.getBootstrapServers());
+    KafkaUtil.setBrokersSsl(config, props.getSsl());
 
-  public AsyncRetry(ScheduledExecutorService scheduler) {
-    this.scheduler = scheduler;
-  }
+    config.put(ConsumerConfig.GROUP_ID_CONFIG, props.getGroupId());
+    config.put(ConsumerConfig.CLIENT_ID_CONFIG, props.getClientId() + "-consumer");
+    config.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+    config.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, props.getMaxPollIntervalMs());
+    config.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, props.getMaxPollRecords());
+    config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
 
-  // convenience default ctor (prod)
-  public AsyncRetry() {
-    this(Executors.newScheduledThreadPool(1));
-  }
+    // ✅ Use ErrorHandlingDeserializer for BOTH key/value
+    config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG,
+            org.springframework.kafka.support.serializer.ErrorHandlingDeserializer.class);
+    config.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
+            org.springframework.kafka.support.serializer.ErrorHandlingDeserializer.class);
 
-  public <T> CompletableFuture<T> retryAsync(
-      Callable<CompletableFuture<T>> action,
-      int maxAttempts,
-      long baseDelayMs
-  ) {
-    CompletableFuture<T> promise = new CompletableFuture<>();
-    attempt(action, maxAttempts, 1, baseDelayMs, promise);
-    return promise;
-  }
+    // ✅ Delegate deserializers (these are the IMPORTANT keys)
+    config.put("spring.deserializer.key.delegate.class",
+            org.apache.kafka.common.serialization.StringDeserializer.class.getName());
 
-  private <T> void attempt(Callable<CompletableFuture<T>> action,
-                           int maxAttempts,
-                           int attempt,
-                           long baseDelayMs,
-                           CompletableFuture<T> promise) {
-    try {
-      action.call().whenComplete((res, ex) -> {
-        if (ex == null) {
-          promise.complete(res);
-          return;
+    String format = props.getMessageFormat().toLowerCase();
+    switch (format) {
+        case "avro" -> {
+            config.put("spring.deserializer.value.delegate.class",
+                    io.confluent.kafka.serializers.KafkaAvroDeserializer.class.getName());
+            config.put("schema.registry.url", props.getSchemaRegistryUrl());
+            config.put("specific.avro.reader", true);
+            KafkaUtil.setSchemaRegistrySsl(config, props.getSsl());
         }
-
-        if (attempt >= maxAttempts || !isRetriable(ex)) {
-          promise.completeExceptionally(ex);
-          return;
+        case "json" -> {
+            // your current JSON mode uses String value - OK for simulation
+            config.put("spring.deserializer.value.delegate.class",
+                    org.apache.kafka.common.serialization.StringDeserializer.class.getName());
         }
-
-        long delay = baseDelayMs * (1L << (attempt - 1)); // 500, 1000, 2000...
-        scheduler.schedule(() -> attempt(action, maxAttempts, attempt + 1, baseDelayMs, promise),
-            delay, TimeUnit.MILLISECONDS);
-      });
-    } catch (Exception e) {
-      promise.completeExceptionally(e);
+        default -> throw new IllegalArgumentException("Unsupported kafka.sdk.format: " + format);
     }
-  }
 
-  // keep same logic as your version
-  boolean isRetriable(Throwable ex) {
-    Throwable root = ex instanceof CompletionException ? ex.getCause() : ex;
-    return root instanceof org.apache.kafka.common.errors.TimeoutException
-        || root instanceof org.apache.kafka.common.errors.NetworkException
-        || root instanceof org.apache.kafka.common.errors.NotLeaderOrFollowerException
-        || root instanceof org.apache.kafka.common.errors.LeaderNotAvailableException;
-  }
+    return new DefaultKafkaConsumerFactory<>(config);
 }
