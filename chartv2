@@ -1,98 +1,74 @@
-import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
-import org.springframework.kafka.listener.MessageListenerContainer;
-import org.springframework.kafka.listener.KafkaMessageListenerContainer;
-import org.springframework.kafka.listener.ContainerProperties;
-import org.springframework.util.StringUtils;
+import org.apache.kafka.clients.admin.*;
+import org.apache.kafka.common.TopicPartition;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 
-public class KafkaSdkConsumerManager {
+public class KafkaClusterConsumers {
 
-    private final KafkaListenerEndpointRegistry registry;
-    private final Set<String> paused = ConcurrentHashMap.newKeySet();
+  private final AdminClient admin;
 
-    public KafkaSdkConsumerManager(KafkaListenerEndpointRegistry registry) {
-        this.registry = Objects.requireNonNull(registry, "registry");
-    }
+  public KafkaClusterConsumers(AdminClient admin) {
+    this.admin = admin;
+  }
 
-    public List<ConsumerContainerInfo> listAll() {
-        List<ConsumerContainerInfo> list = new ArrayList<>();
-        for (MessageListenerContainer c : registry.getListenerContainers()) {
-            String id = c.getListenerId();
-            ContainerProperties cp = c.getContainerProperties();
-            String[] topics = cp.getTopics();
-            String groupId = cp.getGroupId(); // may be null if not set on container props
-            list.add(new ConsumerContainerInfo(
-                    id,
-                    groupId,
-                    topics == null ? List.of() : List.of(topics),
-                    c.isRunning(),
-                    paused.contains(id)
+  public List<MemberView> listConsumersForTopic(String topic) {
+    try {
+      // 1) list all groups
+      Collection<ConsumerGroupListing> groups = admin.listConsumerGroups().all().get();
+
+      List<String> groupIds = groups.stream().map(ConsumerGroupListing::groupId).toList();
+
+      // 2) describe groups (members + assignments)
+      Map<String, ConsumerGroupDescription> desc =
+          admin.describeConsumerGroups(groupIds).all().get();
+
+      List<MemberView> result = new ArrayList<>();
+
+      for (var e : desc.entrySet()) {
+        String groupId = e.getKey();
+        ConsumerGroupDescription d = e.getValue();
+
+        d.members().forEach(m -> {
+          boolean consumesTopic = m.assignment().topicPartitions().stream()
+              .anyMatch(tp -> tp.topic().equals(topic));
+
+          if (consumesTopic) {
+            // collect partitions of that topic for this member
+            List<Integer> partitions = m.assignment().topicPartitions().stream()
+                .filter(tp -> tp.topic().equals(topic))
+                .map(TopicPartition::partition)
+                .sorted()
+                .toList();
+
+            result.add(new MemberView(
+                topic,
+                groupId,
+                m.memberId(),
+                m.clientId(),
+                m.host(),
+                partitions
             ));
-        }
-        return list;
+          }
+        });
+      }
+
+      return result;
+
+    } catch (InterruptedException ie) {
+      Thread.currentThread().interrupt();
+      throw new RuntimeException("Interrupted", ie);
+    } catch (ExecutionException ee) {
+      throw new RuntimeException("AdminClient failed", ee);
     }
+  }
 
-    /** Pause by listenerId */
-    public boolean pauseByListenerId(String listenerId) {
-        MessageListenerContainer c = registry.getListenerContainer(listenerId);
-        if (c == null) return false;
-        c.pause();
-        paused.add(listenerId);
-        return true;
-    }
-
-    /** Resume by listenerId */
-    public boolean resumeByListenerId(String listenerId) {
-        MessageListenerContainer c = registry.getListenerContainer(listenerId);
-        if (c == null) return false;
-        c.resume();
-        paused.remove(listenerId);
-        return true;
-    }
-
-    /** Pause matching containers in THIS app by optional topic/groupId filters */
-    public int pause(String topic, String groupId) {
-        return apply(topic, groupId, true);
-    }
-
-    public int resume(String topic, String groupId) {
-        return apply(topic, groupId, false);
-    }
-
-    private int apply(String topic, String groupId, boolean pause) {
-        int count = 0;
-        for (MessageListenerContainer c : registry.getListenerContainers()) {
-            ContainerProperties cp = c.getContainerProperties();
-
-            if (StringUtils.hasText(groupId)) {
-                String cg = cp.getGroupId();
-                if (cg == null || !cg.equals(groupId)) continue;
-            }
-
-            if (StringUtils.hasText(topic)) {
-                String[] topics = cp.getTopics();
-                if (topics == null || Arrays.stream(topics).noneMatch(t -> t.equals(topic))) continue;
-            }
-
-            if (pause) {
-                c.pause();
-                paused.add(c.getListenerId());
-            } else {
-                c.resume();
-                paused.remove(c.getListenerId());
-            }
-            count++;
-        }
-        return count;
-    }
-
-    public record ConsumerContainerInfo(
-            String listenerId,
-            String groupId,
-            List<String> topics,
-            boolean running,
-            boolean paused
-    ) {}
+  public record MemberView(
+      String topic,
+      String groupId,
+      String memberId,
+      String clientId,
+      String host,
+      List<Integer> partitions
+  ) {}
 }
