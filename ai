@@ -1,46 +1,214 @@
-@Bean
-@ConditionalOnMissingBean(name = "kafkaSdkConsumerFactory")
-public ConsumerFactory<String, Object> kafkaSdkConsumerFactory() {
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.common.TopicPartition;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
-    Map<String, Object> config = new HashMap<>();
+import javax.jms.Message;
+import javax.jms.TextMessage;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CompletableFuture;
 
-    config.put(CommonClientConfigs.SECURITY_PROTOCOL_CONFIG, "SSL");
-    config.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, props.getBootstrapServers());
-    KafkaUtil.setBrokersSsl(config, props.getSsl());
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
-    config.put(ConsumerConfig.GROUP_ID_CONFIG, props.getGroupId());
-    config.put(ConsumerConfig.CLIENT_ID_CONFIG, props.getClientId() + "-consumer");
-    config.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
-    config.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, props.getMaxPollIntervalMs());
-    config.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, props.getMaxPollRecords());
-    config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+/**
+ * Unit tests for onL2MessageEvent(Message message)
+ *
+ * NOTE:
+ * - This test avoids the JSON branch (GenericDatumWriter/EncoderFactory) by setting messageFormat="avro".
+ * - We override buildL2KafkaMessage(...) and responseCodeConverter(...) using a test subclass so the test stays simple.
+ */
+class MQL2FraudServiceTest {
 
-    // ✅ Use ErrorHandlingDeserializer for BOTH key/value
-    config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG,
-            org.springframework.kafka.support.serializer.ErrorHandlingDeserializer.class);
-    config.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
-            org.springframework.kafka.support.serializer.ErrorHandlingDeserializer.class);
+    // ---- Mock the Kafka producer that your code uses ----
+    // In your screenshot: producer.send(l2Record) returns CompletableFuture<SendResult<String,Object>>
+    private KafkaProducerClient producer;
 
-    // ✅ Delegate deserializers (these are the IMPORTANT keys)
-    config.put("spring.deserializer.key.delegate.class",
-            org.apache.kafka.common.serialization.StringDeserializer.class.getName());
+    private TestableMQL2FraudService service;
 
-    String format = props.getMessageFormat().toLowerCase();
-    switch (format) {
-        case "avro" -> {
-            config.put("spring.deserializer.value.delegate.class",
-                    io.confluent.kafka.serializers.KafkaAvroDeserializer.class.getName());
-            config.put("schema.registry.url", props.getSchemaRegistryUrl());
-            config.put("specific.avro.reader", true);
-            KafkaUtil.setSchemaRegistrySsl(config, props.getSsl());
-        }
-        case "json" -> {
-            // your current JSON mode uses String value - OK for simulation
-            config.put("spring.deserializer.value.delegate.class",
-                    org.apache.kafka.common.serialization.StringDeserializer.class.getName());
-        }
-        default -> throw new IllegalArgumentException("Unsupported kafka.sdk.format: " + format);
+    @BeforeEach
+    void setup() {
+        producer = mock(KafkaProducerClient.class);
+
+        service = new TestableMQL2FraudService(producer);
+        service.topicName = "my-topic";
+        service.messageFormat = "avro"; // force the AVRO branch
     }
 
-    return new DefaultKafkaConsumerFactory<>(config);
+    @Test
+    void shouldPublishToKafka_whenValidTextMessage_andAvroFormat() throws Exception {
+        // Arrange
+        TextMessage textMessage = mock(TextMessage.class);
+
+        // payloadArr[0] ends with a delimiter, code does substring(0, len-1)
+        // so "TXN123|" becomes "TXN123"
+        String payload = "TXN123|\n\rSOME_DATA\n\r00";
+        when(textMessage.getText()).thenReturn(payload);
+
+        // producer returns completed future with metadata
+        when(producer.send(any(ProducerRecord.class)))
+                .thenReturn(CompletableFuture.completedFuture(dummySendResult("my-topic", 1, 10)));
+
+        // Act
+        service.onL2MessageEvent(textMessage);
+
+        // Assert - capture producer record
+        ArgumentCaptor<ProducerRecord<String, Object>> captor = ArgumentCaptor.forClass(ProducerRecord.class);
+        verify(producer, times(1)).send(captor.capture());
+
+        ProducerRecord<String, Object> rec = captor.getValue();
+        assertEquals("my-topic", rec.topic());
+        assertEquals("TXN123", rec.key());
+        assertEquals("FINAL_MESSAGE_OBJ", rec.value()); // from overridden buildL2KafkaMessage()
+
+        // header check
+        var header = rec.headers().lastHeader("kafka_correlationId");
+        assertEquals("TXN123", new String(header.value(), StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void shouldIgnore_whenMessageIsNotTextMessage() {
+        // Arrange
+        Message nonText = mock(Message.class);
+
+        // Act + Assert
+        assertDoesNotThrow(() -> service.onL2MessageEvent(nonText));
+        verify(producer, never()).send(any());
+    }
+
+    @Test
+    void shouldIgnore_whenPayloadPatternIsInvalid() throws Exception {
+        // Arrange
+        TextMessage textMessage = mock(TextMessage.class);
+
+        // split by "\n\r" => less than 3 parts => returns early
+        when(textMessage.getText()).thenReturn("TXN123|\n\rONLY_TWO_PARTS");
+
+        // Act
+        service.onL2MessageEvent(textMessage);
+
+        // Assert
+        verify(producer, never()).send(any());
+    }
+
+    @Test
+    void shouldNotThrow_whenProducerSendFails() throws Exception {
+        // Arrange
+        TextMessage textMessage = mock(TextMessage.class);
+        when(textMessage.getText()).thenReturn("TXN123|\n\rSOME_DATA\n\r00");
+
+        when(producer.send(any(ProducerRecord.class)))
+                .thenThrow(new RuntimeException("Kafka down"));
+
+        // Act + Assert (method has try/catch)
+        assertDoesNotThrow(() -> service.onL2MessageEvent(textMessage));
+
+        verify(producer, times(1)).send(any());
+    }
+
+    // ----------------- helpers -----------------
+
+    private static SendResult<String, Object> dummySendResult(String topic, int partition, long offset) {
+        TopicPartition tp = new TopicPartition(topic, partition);
+
+        // RecordMetadata(topicPartition, baseOffset, batchIndex, timestamp, checksum, serializedKeySize, serializedValueSize)
+        RecordMetadata metadata = new RecordMetadata(tp, offset, 0, System.currentTimeMillis(), 0L, 0, 0);
+
+        // We don't really need the ProducerRecord inside SendResult for this test
+        return new SendResult<>(metadata);
+    }
+
+    /**
+     * Minimal "producer client" so the test matches your code (CompletableFuture based).
+     * Replace with your real type if you have one (KafkaTemplate wrapper, RetryableKafkaClient, etc).
+     */
+    interface KafkaProducerClient {
+        CompletableFuture<SendResult<String, Object>> send(ProducerRecord<String, Object> record);
+    }
+
+    /**
+     * Minimal SendResult used by the service (because your code calls future.get().getRecordMetadata()).
+     * If you are using Spring Kafka SendResult, replace this with org.springframework.kafka.support.SendResult.
+     */
+    static class SendResult<K, V> {
+        private final RecordMetadata recordMetadata;
+
+        SendResult(RecordMetadata recordMetadata) {
+            this.recordMetadata = recordMetadata;
+        }
+
+        public RecordMetadata getRecordMetadata() {
+            return recordMetadata;
+        }
+    }
+
+    /**
+     * This is a test-friendly version of your service class from screenshot.
+     * We override the parts that depend on Avro building/conversion to keep unit tests stable.
+     *
+     * Replace "onL2MessageEvent" body with your exact method if you want,
+     * OR keep this structure and just paste your method inside.
+     */
+    static class TestableMQL2FraudService {
+
+        String topicName;
+        String messageFormat;
+
+        private final KafkaProducerClient producer;
+
+        TestableMQL2FraudService(KafkaProducerClient producer) {
+            this.producer = producer;
+        }
+
+        // ---- Paste your method logic here (this matches screenshot behavior for AVRO branch) ----
+        public void onL2MessageEvent(Message message) {
+            try {
+                if (!(message instanceof TextMessage textMsg)) {
+                    return;
+                }
+
+                String payload = textMsg.getText();
+                String[] payloadArr = payload.split("\n\r");
+                if (payloadArr.length != 3) {
+                    return;
+                }
+
+                String transactionKey = payloadArr[0].substring(0, payloadArr[0].length() - 1);
+                String responseCode = payloadArr[2].trim();
+                String convertedResponseCode = responseCodeConverter(responseCode);
+
+                Object finalMessage = buildL2KafkaMessage(transactionKey, convertedResponseCode);
+
+                if (!"avro".equalsIgnoreCase(messageFormat)) {
+                    // your JSON branch exists in production; not tested here
+                    return;
+                }
+
+                ProducerRecord<String, Object> record =
+                        new ProducerRecord<>(topicName, transactionKey, finalMessage);
+                record.headers().add("kafka_correlationId", transactionKey.getBytes(StandardCharsets.UTF_8));
+
+                CompletableFuture<SendResult<String, Object>> resultFuture = producer.send(record);
+
+                // mimic your "get metadata" behavior
+                RecordMetadata md = resultFuture.get().getRecordMetadata();
+                // logging omitted in unit test
+            } catch (Exception ex) {
+                // your code logs; unit test only ensures no throw
+            }
+        }
+
+        // Overridable hooks for testing
+        protected String responseCodeConverter(String responseCode) {
+            return responseCode;
+        }
+
+        protected Object buildL2KafkaMessage(String transactionKey, String convertedResponseCode) {
+            return "FINAL_MESSAGE_OBJ";
+        }
+    }
 }
