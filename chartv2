@@ -1,57 +1,98 @@
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.common.errors.SerializationException;
-import org.springframework.kafka.listener.ConsumerRecordRecoverer;
-import org.springframework.kafka.support.serializer.DeserializationException;
+import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
+import org.springframework.kafka.listener.MessageListenerContainer;
+import org.springframework.kafka.listener.KafkaMessageListenerContainer;
+import org.springframework.kafka.listener.ContainerProperties;
+import org.springframework.util.StringUtils;
 
-import java.util.Objects;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
-public class NotifyingRecoverer implements ConsumerRecordRecoverer {
+public class KafkaSdkConsumerManager {
 
-    private final ConsumerRecordRecoverer delegate;
-    private final KafkaSdkProperties props;
-    private final SdkNotifier notifier;
+    private final KafkaListenerEndpointRegistry registry;
+    private final Set<String> paused = ConcurrentHashMap.newKeySet();
 
-    public NotifyingRecoverer(ConsumerRecordRecoverer delegate, KafkaSdkProperties props, SdkNotifier notifier) {
-        this.delegate = Objects.requireNonNull(delegate);
-        this.props = Objects.requireNonNull(props);
-        this.notifier = Objects.requireNonNull(notifier);
+    public KafkaSdkConsumerManager(KafkaListenerEndpointRegistry registry) {
+        this.registry = Objects.requireNonNull(registry, "registry");
     }
 
-    @Override
-    public void accept(ConsumerRecord<?, ?> record, Exception exception) {
-        // record should NOT be null here for record-level recovery; but guard anyway
-        if (record == null) {
-            notifier.onBadPayload(null, exception);
-            return;
+    public List<ConsumerContainerInfo> listAll() {
+        List<ConsumerContainerInfo> list = new ArrayList<>();
+        for (MessageListenerContainer c : registry.getListenerContainers()) {
+            String id = c.getListenerId();
+            ContainerProperties cp = c.getContainerProperties();
+            String[] topics = cp.getTopics();
+            String groupId = cp.getGroupId(); // may be null if not set on container props
+            list.add(new ConsumerContainerInfo(
+                    id,
+                    groupId,
+                    topics == null ? List.of() : List.of(topics),
+                    c.isRunning(),
+                    paused.contains(id)
+            ));
         }
-
-        Throwable root = rootCause(exception);
-
-        if (isBadPayload(root)) {
-            notifier.onBadPayload(record, exception);
-            // If you want to SKIP instead of DLT, return here.
-            // If you want DLT + notify, fall through to delegate.
-        }
-
-        try {
-            delegate.accept(record, exception);
-        } catch (Exception publishEx) {
-            notifier.onDlqPublishFailed(record, exception, publishEx);
-            // do NOT throw endlessly
-        }
+        return list;
     }
 
-    private boolean isBadPayload(Throwable t) {
-        return t instanceof DeserializationException
-                || t instanceof SerializationException
-                || (t != null && t.getMessage() != null && t.getMessage().contains("Unknown magic byte"));
+    /** Pause by listenerId */
+    public boolean pauseByListenerId(String listenerId) {
+        MessageListenerContainer c = registry.getListenerContainer(listenerId);
+        if (c == null) return false;
+        c.pause();
+        paused.add(listenerId);
+        return true;
     }
 
-    private Throwable rootCause(Throwable t) {
-        Throwable cur = t;
-        while (cur.getCause() != null && cur.getCause() != cur) {
-            cur = cur.getCause();
-        }
-        return cur;
+    /** Resume by listenerId */
+    public boolean resumeByListenerId(String listenerId) {
+        MessageListenerContainer c = registry.getListenerContainer(listenerId);
+        if (c == null) return false;
+        c.resume();
+        paused.remove(listenerId);
+        return true;
     }
+
+    /** Pause matching containers in THIS app by optional topic/groupId filters */
+    public int pause(String topic, String groupId) {
+        return apply(topic, groupId, true);
+    }
+
+    public int resume(String topic, String groupId) {
+        return apply(topic, groupId, false);
+    }
+
+    private int apply(String topic, String groupId, boolean pause) {
+        int count = 0;
+        for (MessageListenerContainer c : registry.getListenerContainers()) {
+            ContainerProperties cp = c.getContainerProperties();
+
+            if (StringUtils.hasText(groupId)) {
+                String cg = cp.getGroupId();
+                if (cg == null || !cg.equals(groupId)) continue;
+            }
+
+            if (StringUtils.hasText(topic)) {
+                String[] topics = cp.getTopics();
+                if (topics == null || Arrays.stream(topics).noneMatch(t -> t.equals(topic))) continue;
+            }
+
+            if (pause) {
+                c.pause();
+                paused.add(c.getListenerId());
+            } else {
+                c.resume();
+                paused.remove(c.getListenerId());
+            }
+            count++;
+        }
+        return count;
+    }
+
+    public record ConsumerContainerInfo(
+            String listenerId,
+            String groupId,
+            List<String> topics,
+            boolean running,
+            boolean paused
+    ) {}
 }
