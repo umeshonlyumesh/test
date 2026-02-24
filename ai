@@ -1,90 +1,88 @@
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.header.Header;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+import java.net.URISyntaxException;
+import java.util.ArrayList;
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.support.SendResult;
-import org.springframework.test.util.ReflectionTestUtils;
 
-import javax.jms.TextMessage;
-import java.nio.charset.StandardCharsets;
-import java.util.concurrent.CompletableFuture;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+// Update packages/imports to match your project
+// import com.truist.core.fraud.util.TokenizationHelper;
+// import com.truist.core.fraud.util.TokenizationUtil;
+// import com.truist.core.fraud.model.FraudRequest;
+// import com.truist.core.fraud.model.Parameter;
 
 @ExtendWith(MockitoExtension.class)
-class MQL2FraudServiceTest {
+class TokenizationHelperTest {
 
     @Mock
-    private KafkaTemplate<String, Object> producer;
+    private TokenizationUtil tokenizationUtil;
+
+    @Mock
+    private FraudRequest request;
 
     @InjectMocks
-    private MQL2FraudService service;
+    private TokenizationHelper tokenizationHelper;
 
     @Test
-    void shouldPublishToKafka_whenValidTextMessage_andAvroFormat() throws Exception {
-        // Arrange
-        ReflectionTestUtils.setField(service, "topicName", "my-topic");
-        ReflectionTestUtils.setField(service, "messageFormat", "avro");
+    void detokenizeFields_shouldReplaceOnlyConfiguredFields_inOriginalOrder() throws URISyntaxException {
+        // Arrange: list must be mutable because your code does params.set(i, ...)
+        List<Parameter> params = new ArrayList<>(List.of(
+                new Parameter("someOtherField", "keep-me"),
+                new Parameter("payeeDataAccountNumber", "tok-111"),
+                new Parameter("trxMonitoredAccountNumber", "tok-222"),
+                new Parameter("anotherField", "keep-me-too"),
+                new Parameter("trxPayeeaccountNumber", "tok-333") // note your constant includes this exact casing
+        ));
 
-        TextMessage textMessage = mock(TextMessage.class);
+        when(request.getParameters()).thenReturn(params);
 
-        // must be 3 parts split by "\n\r"
-        // payloadArr[0] ends with delimiter; code does substring(0, len-1)
-        when(textMessage.getText()).thenReturn("TXN123|\n\rSOME_DATA\n\r00");
-
-        // KafkaTemplate.send returns CompletableFuture (Spring Kafka 3.x)
-        CompletableFuture<SendResult<String, Object>> okFuture = CompletableFuture.completedFuture(mock(SendResult.class));
-        when(producer.send(any(ProducerRecord.class))).thenReturn(okFuture);
+        // tokenizationUtil returns detokenized values in the same order of tokens input
+        when(tokenizationUtil.detokenize(List.of("tok-111", "tok-222", "tok-333")))
+                .thenReturn(List.of("acc-111", "acc-222", "acc-333"));
 
         // Act
-        service.onL2MessageEvent(textMessage);
+        tokenizationHelper.detokenizeFields(request);
 
-        // Assert - capture record
-        ArgumentCaptor<ProducerRecord<String, Object>> captor = ArgumentCaptor.forClass(ProducerRecord.class);
-        verify(producer, times(1)).send(captor.capture());
+        // Assert: non-target fields unchanged
+        assertEquals("keep-me", params.get(0).getFieldValue());
+        assertEquals("keep-me-too", params.get(3).getFieldValue());
 
-        ProducerRecord<String, Object> rec = captor.getValue();
-        assertEquals("my-topic", rec.topic());
-        assertEquals("TXN123", rec.key());
-        assertNotNull(rec.value());
+        // Assert: target fields replaced at same index with new Parameter(...)
+        assertEquals("payeeDataAccountNumber", params.get(1).getFieldId());
+        assertEquals("acc-111", params.get(1).getFieldValue());
 
-        Header h = rec.headers().lastHeader("kafka_correlationId");
-        assertNotNull(h);
-        assertEquals("TXN123", new String(h.value(), StandardCharsets.UTF_8));
+        assertEquals("trxMonitoredAccountNumber", params.get(2).getFieldId());
+        assertEquals("acc-222", params.get(2).getFieldValue());
+
+        assertEquals("trxPayeeaccountNumber", params.get(4).getFieldId());
+        assertEquals("acc-333", params.get(4).getFieldValue());
+
+        verify(tokenizationUtil, times(1)).detokenize(List.of("tok-111", "tok-222", "tok-333"));
+        verifyNoMoreInteractions(tokenizationUtil);
     }
 
     @Test
-    void shouldIgnore_whenPayloadPatternInvalid() throws Exception {
-        ReflectionTestUtils.setField(service, "messageFormat", "avro");
+    void detokenizeFields_shouldReturnWhenNoDetokenizeFieldsPresent() throws URISyntaxException {
+        // Arrange
+        List<Parameter> params = new ArrayList<>(List.of(
+                new Parameter("fieldA", "a"),
+                new Parameter("fieldB", "b")
+        ));
 
-        TextMessage textMessage = mock(TextMessage.class);
-        when(textMessage.getText()).thenReturn("TXN123|\n\rONLY_TWO_PARTS");
+        when(request.getParameters()).thenReturn(params);
 
-        service.onL2MessageEvent(textMessage);
+        // Act
+        tokenizationHelper.detokenizeFields(request);
 
-        verify(producer, never()).send(any());
-    }
-
-    @Test
-    void shouldNotThrow_whenProducerThrows() throws Exception {
-        ReflectionTestUtils.setField(service, "topicName", "my-topic");
-        ReflectionTestUtils.setField(service, "messageFormat", "avro");
-
-        TextMessage textMessage = mock(TextMessage.class);
-        when(textMessage.getText()).thenReturn("TXN123|\n\rSOME_DATA\n\r00");
-
-        when(producer.send(any(ProducerRecord.class)))
-                .thenThrow(new RuntimeException("Kafka down"));
-
-        assertDoesNotThrow(() -> service.onL2MessageEvent(textMessage));
-
-        verify(producer, times(1)).send(any());
+        // Assert
+        verifyNoInteractions(tokenizationUtil);
+        assertEquals("a", params.get(0).getFieldValue());
+        assertEquals("b", params.get(1).getFieldValue());
     }
 }
