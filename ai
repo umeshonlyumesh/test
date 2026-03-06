@@ -1,88 +1,28 @@
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+public void publish(String topic, String key, Object payload) {
+    kafkaTemplate.send(topic, key, payload)
+            .thenAccept(this::handleSuccess)
+            .exceptionally(ex -> {
+                handleFailure(topic, key, payload, ex);
+                return null;
+            });
+}
 
-import java.net.URISyntaxException;
-import java.util.ArrayList;
-import java.util.List;
+private void handleSuccess(SendResult<String, Object> result) {
+    log.info(
+            "Kafka send success. topic={}, partition={}, offset={}",
+            result.getRecordMetadata().topic(),
+            result.getRecordMetadata().partition(),
+            result.getRecordMetadata().offset()
+    );
+}
 
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-
-// Update packages/imports to match your project
-// import com.truist.core.fraud.util.TokenizationHelper;
-// import com.truist.core.fraud.util.TokenizationUtil;
-// import com.truist.core.fraud.model.FraudRequest;
-// import com.truist.core.fraud.model.Parameter;
-
-@ExtendWith(MockitoExtension.class)
-class TokenizationHelperTest {
-
-    @Mock
-    private TokenizationUtil tokenizationUtil;
-
-    @Mock
-    private FraudRequest request;
-
-    @InjectMocks
-    private TokenizationHelper tokenizationHelper;
-
-    @Test
-    void detokenizeFields_shouldReplaceOnlyConfiguredFields_inOriginalOrder() throws URISyntaxException {
-        // Arrange: list must be mutable because your code does params.set(i, ...)
-        List<Parameter> params = new ArrayList<>(List.of(
-                new Parameter("someOtherField", "keep-me"),
-                new Parameter("payeeDataAccountNumber", "tok-111"),
-                new Parameter("trxMonitoredAccountNumber", "tok-222"),
-                new Parameter("anotherField", "keep-me-too"),
-                new Parameter("trxPayeeaccountNumber", "tok-333") // note your constant includes this exact casing
-        ));
-
-        when(request.getParameters()).thenReturn(params);
-
-        // tokenizationUtil returns detokenized values in the same order of tokens input
-        when(tokenizationUtil.detokenize(List.of("tok-111", "tok-222", "tok-333")))
-                .thenReturn(List.of("acc-111", "acc-222", "acc-333"));
-
-        // Act
-        tokenizationHelper.detokenizeFields(request);
-
-        // Assert: non-target fields unchanged
-        assertEquals("keep-me", params.get(0).getFieldValue());
-        assertEquals("keep-me-too", params.get(3).getFieldValue());
-
-        // Assert: target fields replaced at same index with new Parameter(...)
-        assertEquals("payeeDataAccountNumber", params.get(1).getFieldId());
-        assertEquals("acc-111", params.get(1).getFieldValue());
-
-        assertEquals("trxMonitoredAccountNumber", params.get(2).getFieldId());
-        assertEquals("acc-222", params.get(2).getFieldValue());
-
-        assertEquals("trxPayeeaccountNumber", params.get(4).getFieldId());
-        assertEquals("acc-333", params.get(4).getFieldValue());
-
-        verify(tokenizationUtil, times(1)).detokenize(List.of("tok-111", "tok-222", "tok-333"));
-        verifyNoMoreInteractions(tokenizationUtil);
-    }
-
-    @Test
-    void detokenizeFields_shouldReturnWhenNoDetokenizeFieldsPresent() throws URISyntaxException {
-        // Arrange
-        List<Parameter> params = new ArrayList<>(List.of(
-                new Parameter("fieldA", "a"),
-                new Parameter("fieldB", "b")
-        ));
-
-        when(request.getParameters()).thenReturn(params);
-
-        // Act
-        tokenizationHelper.detokenizeFields(request);
-
-        // Assert
-        verifyNoInteractions(tokenizationUtil);
-        assertEquals("a", params.get(0).getFieldValue());
-        assertEquals("b", params.get(1).getFieldValue());
-    }
+private void handleFailure(String topic, String key, Object payload, Throwable ex) {
+    log.error(
+            "Kafka send failed. topic={}, key={}, payload={}, error={}",
+            topic,
+            key,
+            payload,
+            ex.getMessage(),
+            ex
+    );
 }
