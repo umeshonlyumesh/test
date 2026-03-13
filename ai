@@ -43,8 +43,3 @@ WHERE pt.archive_date >= DATE '2026-01-01'
   AND t.lob = 'MTG'
 ORDER BY pt.uid DESC
 FETCH FIRST 5000 ROWS ONLY;
-
-
-
-
-
