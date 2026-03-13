@@ -1,4 +1,5 @@
-WITH top_pt AS (
+EXPLAIN (ANALYZE, BUFFERS)
+WITH pt_top AS (
     SELECT
         pt.uid,
         pt.archive_date,
@@ -64,7 +65,7 @@ SELECT
     pt.updated_by,
     pt.return_reason_code,
     pt.return_info
-FROM top_pt pt
+FROM pt_top pt
 JOIN moneymovement.transaction t
   ON t.archive_date = pt.archive_date
  AND t.uid = pt.uid
