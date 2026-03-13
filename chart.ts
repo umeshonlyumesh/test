@@ -1,91 +1,46 @@
-import org.apache.kafka.clients.admin.*;
-import org.apache.kafka.common.TopicPartition;
-
-import java.time.Duration;
-import java.util.*;
-import java.util.concurrent.ExecutionException;
-import java.util.stream.Collectors;
-
-public class KafkaClusterConsumerInspector {
-
-    private final AdminClient admin;
-
-    public KafkaClusterConsumerInspector(AdminClient admin) {
-        this.admin = admin;
-    }
-
-    public List<GroupTopicInfo> findGroupsConsumingTopic(String topic) {
-        try {
-            // 1) all groups
-            Collection<ConsumerGroupListing> groups =
-                    admin.listConsumerGroups().all().get();
-
-            List<GroupTopicInfo> result = new ArrayList<>();
-
-            for (ConsumerGroupListing g : groups) {
-                String groupId = g.groupId();
-
-                // 2) offsets for group
-                Map<TopicPartition, OffsetAndMetadata> offsets =
-                        admin.listConsumerGroupOffsets(groupId).partitionsToOffsetAndMetadata().get();
-
-                // filter to topic
-                Map<TopicPartition, OffsetAndMetadata> topicOffsets = offsets.entrySet().stream()
-                        .filter(e -> e.getKey().topic().equals(topic))
-                        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-
-                if (topicOffsets.isEmpty()) continue;
-
-                // 3) end offsets (for lag)
-                Map<TopicPartition, OffsetSpec> endReq = new HashMap<>();
-                for (TopicPartition tp : topicOffsets.keySet()) {
-                    endReq.put(tp, OffsetSpec.latest());
-                }
-
-                Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> ends =
-                        admin.listOffsets(endReq).all().get();
-
-                long totalLag = 0L;
-                List<PartitionLag> partitionLags = new ArrayList<>();
-
-                for (var e : topicOffsets.entrySet()) {
-                    TopicPartition tp = e.getKey();
-                    long committed = e.getValue().offset();
-                    long end = ends.get(tp).offset();
-                    long lag = Math.max(0, end - committed);
-                    totalLag += lag;
-                    partitionLags.add(new PartitionLag(tp.partition(), committed, end, lag));
-                }
-
-                // 4) members (optional, best-effort)
-                ConsumerGroupDescription desc =
-                        admin.describeConsumerGroups(List.of(groupId)).all().get().get(groupId);
-
-                List<MemberInfo> members = desc.members().stream()
-                        .map(m -> new MemberInfo(m.clientId(), m.host(), m.memberId()))
-                        .toList();
-
-                result.add(new GroupTopicInfo(groupId, members, partitionLags, totalLag));
-            }
-
-            return result;
-
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("Interrupted while querying Kafka", ie);
-        } catch (ExecutionException ee) {
-            throw new RuntimeException("Kafka Admin call failed", ee);
-        }
-    }
-
-    public record GroupTopicInfo(
-            String groupId,
-            List<MemberInfo> members,
-            List<PartitionLag> partitions,
-            long totalLag
-    ) {}
-
-    public record MemberInfo(String clientId, String host, String memberId) {}
-
-    public record PartitionLag(int partition, long committedOffset, long endOffset, long lag) {}
-}
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT
+    pt.transaction_id,
+    pi.parent_reference,
+    pi.instruction_reference,
+    t.state,
+    pi.amount,
+    pi.amount_type,
+    pi.channel_id,
+    pt.reject_reason_code,
+    pt.reject_info,
+    pt.transaction_type,
+    pt.debit_account,
+    pt.credit_account,
+    pt.credit_mop,
+    pt.debit_mop,
+    t.updated_timestamp,
+    t.created_timestamp,
+    pt.payment_freq_type,
+    t.status,
+    pt.initiator_cif,
+    pt.execution_date,
+    pt.settlement_date,
+    pt.credit_department,
+    pt.debit_department,
+    pt.xws_reference_id,
+    pt.amount_breakup,
+    t.lob,
+    pt.addenda,
+    pt.uvf_flag,
+    pt.created_by,
+    pt.updated_by,
+    pt.return_reason_code,
+    pt.return_info
+FROM moneymovement.payment_transaction pt
+INNER JOIN moneymovement.transaction t
+    ON t.archive_date = pt.archive_date
+   AND t.uid = pt.uid
+INNER JOIN moneymovement.payment_instruction pi
+    ON pi.instruction_date = pt.archive_date
+   AND pi.uid = pt.instruction_uid
+WHERE pt.archive_date >= DATE '2026-01-01'
+  AND pt.archive_date <= DATE '2026-03-01'
+  AND t.lob = 'MTG'
+ORDER BY pt.uid DESC
+FETCH FIRST 5000 ROWS ONLY;
