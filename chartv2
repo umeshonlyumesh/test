@@ -1,74 +1,76 @@
-import org.apache.kafka.clients.admin.*;
-import org.apache.kafka.common.TopicPartition;
-
-import java.util.*;
-import java.util.concurrent.ExecutionException;
-
-public class KafkaClusterConsumers {
-
-  private final AdminClient admin;
-
-  public KafkaClusterConsumers(AdminClient admin) {
-    this.admin = admin;
-  }
-
-  public List<MemberView> listConsumersForTopic(String topic) {
-    try {
-      // 1) list all groups
-      Collection<ConsumerGroupListing> groups = admin.listConsumerGroups().all().get();
-
-      List<String> groupIds = groups.stream().map(ConsumerGroupListing::groupId).toList();
-
-      // 2) describe groups (members + assignments)
-      Map<String, ConsumerGroupDescription> desc =
-          admin.describeConsumerGroups(groupIds).all().get();
-
-      List<MemberView> result = new ArrayList<>();
-
-      for (var e : desc.entrySet()) {
-        String groupId = e.getKey();
-        ConsumerGroupDescription d = e.getValue();
-
-        d.members().forEach(m -> {
-          boolean consumesTopic = m.assignment().topicPartitions().stream()
-              .anyMatch(tp -> tp.topic().equals(topic));
-
-          if (consumesTopic) {
-            // collect partitions of that topic for this member
-            List<Integer> partitions = m.assignment().topicPartitions().stream()
-                .filter(tp -> tp.topic().equals(topic))
-                .map(TopicPartition::partition)
-                .sorted()
-                .toList();
-
-            result.add(new MemberView(
-                topic,
-                groupId,
-                m.memberId(),
-                m.clientId(),
-                m.host(),
-                partitions
-            ));
-          }
-        });
-      }
-
-      return result;
-
-    } catch (InterruptedException ie) {
-      Thread.currentThread().interrupt();
-      throw new RuntimeException("Interrupted", ie);
-    } catch (ExecutionException ee) {
-      throw new RuntimeException("AdminClient failed", ee);
-    }
-  }
-
-  public record MemberView(
-      String topic,
-      String groupId,
-      String memberId,
-      String clientId,
-      String host,
-      List<Integer> partitions
-  ) {}
-}
+WITH top_pt AS (
+    SELECT
+        pt.uid,
+        pt.archive_date,
+        pt.instruction_uid,
+        pt.transaction_id,
+        pt.reject_reason_code,
+        pt.reject_info,
+        pt.transaction_type,
+        pt.debit_account,
+        pt.credit_account,
+        pt.credit_mop,
+        pt.debit_mop,
+        pt.payment_freq_type,
+        pt.initiator_cif,
+        pt.execution_date,
+        pt.settlement_date,
+        pt.credit_department,
+        pt.debit_department,
+        pt.xws_reference_id,
+        pt.amount_breakup,
+        pt.addenda,
+        pt.uvf_flag,
+        pt.created_by,
+        pt.updated_by,
+        pt.return_reason_code,
+        pt.return_info
+    FROM moneymovement.payment_transaction pt
+    WHERE pt.archive_date >= DATE '2026-01-01'
+      AND pt.archive_date <= DATE '2026-03-01'
+    ORDER BY pt.uid DESC
+    FETCH FIRST 50000 ROWS ONLY
+)
+SELECT
+    pt.transaction_id,
+    pi.parent_reference,
+    pi.instruction_reference,
+    t.state,
+    pi.amount,
+    pi.amount_type,
+    pi.channel_id,
+    pt.reject_reason_code,
+    pt.reject_info,
+    pt.transaction_type,
+    pt.debit_account,
+    pt.credit_account,
+    pt.credit_mop,
+    pt.debit_mop,
+    t.updated_timestamp,
+    t.created_timestamp,
+    pt.payment_freq_type,
+    t.status,
+    pt.initiator_cif,
+    pt.execution_date,
+    pt.settlement_date,
+    pt.credit_department,
+    pt.debit_department,
+    pt.xws_reference_id,
+    pt.amount_breakup,
+    t.lob,
+    pt.addenda,
+    pt.uvf_flag,
+    pt.created_by,
+    pt.updated_by,
+    pt.return_reason_code,
+    pt.return_info
+FROM top_pt pt
+JOIN moneymovement.transaction t
+  ON t.archive_date = pt.archive_date
+ AND t.uid = pt.uid
+JOIN moneymovement.payment_instruction pi
+  ON pi.instruction_date = pt.archive_date
+ AND pi.uid = pt.instruction_uid
+WHERE t.lob = 'MTG'
+ORDER BY pt.uid DESC
+FETCH FIRST 5000 ROWS ONLY;
