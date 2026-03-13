@@ -32,14 +32,19 @@ SELECT
     pt.return_reason_code,
     pt.return_info
 FROM moneymovement.payment_transaction pt
-JOIN moneymovement.transaction t
-  ON t.archive_date = pt.archive_date
- AND t.uid = pt.uid
-JOIN moneymovement.payment_instruction pi
-  ON pi.instruction_date = pt.archive_date
- AND pi.uid = pt.instruction_uid
-WHERE t.lob = 'MTG'
-  AND pt.archive_date >= DATE '2026-02-01'
+INNER JOIN moneymovement.transaction t
+    ON t.archive_date = pt.archive_date
+   AND t.uid = pt.uid
+INNER JOIN moneymovement.payment_instruction pi
+    ON pi.instruction_date = pt.archive_date
+   AND pi.uid = pt.instruction_uid
+WHERE pt.archive_date >= DATE '2026-01-01'
   AND pt.archive_date <= DATE '2026-03-01'
+  AND t.lob = 'MTG'
 ORDER BY pt.uid DESC
-LIMIT 5000;
+FETCH FIRST 5000 ROWS ONLY;
+
+
+
+
+
