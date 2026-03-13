@@ -1,28 +1,45 @@
-public void publish(String topic, String key, Object payload) {
-    kafkaTemplate.send(topic, key, payload)
-            .thenAccept(this::handleSuccess)
-            .exceptionally(ex -> {
-                handleFailure(topic, key, payload, ex);
-                return null;
-            });
-}
-
-private void handleSuccess(SendResult<String, Object> result) {
-    log.info(
-            "Kafka send success. topic={}, partition={}, offset={}",
-            result.getRecordMetadata().topic(),
-            result.getRecordMetadata().partition(),
-            result.getRecordMetadata().offset()
-    );
-}
-
-private void handleFailure(String topic, String key, Object payload, Throwable ex) {
-    log.error(
-            "Kafka send failed. topic={}, key={}, payload={}, error={}",
-            topic,
-            key,
-            payload,
-            ex.getMessage(),
-            ex
-    );
-}
+SELECT
+    pt.transaction_id,
+    pi.parent_reference,
+    pi.instruction_reference,
+    t.state,
+    pi.amount,
+    pi.amount_type,
+    pi.channel_id,
+    pt.reject_reason_code,
+    pt.reject_info,
+    pt.transaction_type,
+    pt.debit_account,
+    pt.credit_account,
+    pt.credit_mop,
+    pt.debit_mop,
+    t.updated_timestamp,
+    t.created_timestamp,
+    pt.payment_freq_type,
+    t.status,
+    pt.initiator_cif,
+    pt.execution_date,
+    pt.settlement_date,
+    pt.credit_department,
+    pt.debit_department,
+    pt.xws_reference_id,
+    pt.amount_breakup,
+    t.lob,
+    pt.addenda,
+    pt.uvf_flag,
+    pt.created_by,
+    pt.updated_by,
+    pt.return_reason_code,
+    pt.return_info
+FROM moneymovement.payment_transaction pt
+JOIN moneymovement.transaction t
+  ON t.archive_date = pt.archive_date
+ AND t.uid = pt.uid
+JOIN moneymovement.payment_instruction pi
+  ON pi.instruction_date = pt.archive_date
+ AND pi.uid = pt.instruction_uid
+WHERE t.lob = 'MTG'
+  AND pt.archive_date >= DATE '2026-02-01'
+  AND pt.archive_date <= DATE '2026-03-01'
+ORDER BY pt.uid DESC
+LIMIT 5000;
