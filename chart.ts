@@ -1,46 +1,41 @@
-EXPLAIN (ANALYZE, BUFFERS)
-SELECT
-    pt.transaction_id,
-    pi.parent_reference,
-    pi.instruction_reference,
-    t.state,
-    pi.amount,
-    pi.amount_type,
-    pi.channel_id,
-    pt.reject_reason_code,
-    pt.reject_info,
-    pt.transaction_type,
-    pt.debit_account,
-    pt.credit_account,
-    pt.credit_mop,
-    pt.debit_mop,
-    t.updated_timestamp,
-    t.created_timestamp,
-    pt.payment_freq_type,
-    t.status,
-    pt.initiator_cif,
-    pt.execution_date,
-    pt.settlement_date,
-    pt.credit_department,
-    pt.debit_department,
-    pt.xws_reference_id,
-    pt.amount_breakup,
-    t.lob,
-    pt.addenda,
-    pt.uvf_flag,
-    pt.created_by,
-    pt.updated_by,
-    pt.return_reason_code,
-    pt.return_info
-FROM moneymovement.payment_transaction pt
-INNER JOIN moneymovement.transaction t
-    ON t.archive_date = pt.archive_date
-   AND t.uid = pt.uid
-INNER JOIN moneymovement.payment_instruction pi
-    ON pi.instruction_date = pt.archive_date
-   AND pi.uid = pt.instruction_uid
-WHERE pt.archive_date >= DATE '2026-01-01'
-  AND pt.archive_date <= DATE '2026-03-01'
-  AND t.lob = 'MTG'
-ORDER BY pt.uid DESC
-FETCH FIRST 5000 ROWS ONLY;
+package com.example.coreapi.fraud.client;
+
+import com.example.coreapi.common.http.SdkErrorHandler;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
+
+@Component
+@RequiredArgsConstructor
+public class FraudApiClient {
+
+    private final RestClient fraudRestClient;
+    private final SdkErrorHandler sdkErrorHandler;
+
+    public String invokeApi(Object request) {
+        try {
+            return fraudRestClient.post()
+                    .uri("/fraud/check")
+                    .body(request)
+                    .retrieve()
+                    .body(String.class);
+
+        } catch (RestClientResponseException ex) {
+            sdkErrorHandler.handleError(
+                    "fraud",
+                    ex.getStatusCode(),
+                    ex.getResponseBodyAsString()
+            );
+            throw ex;
+        } catch (ResourceAccessException ex) {
+            sdkErrorHandler.handleError("fraud", ex);
+            throw ex;
+        } catch (RestClientException ex) {
+            sdkErrorHandler.handleError("fraud", ex);
+            throw ex;
+        }
+    }
+}
