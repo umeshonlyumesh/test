@@ -1,116 +1,80 @@
-package com.example.coreapi.common.http;
+package com.yourpackage.deposit;
 
-import java.net.ConnectException;
-import java.net.SocketTimeoutException;
-import java.net.UnknownHostException;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
-import javax.net.ssl.SSLException;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.web.client.RestClient;
 
-import org.apache.hc.client5.http.ConnectTimeoutException;
-import org.apache.hc.core5.pool.TimeoutException;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.HttpStatusCode;
-import org.springframework.stereotype.Component;
-import org.springframework.web.client.ResourceAccessException;
-import org.springframework.web.client.RestClientException;
+class DepositClientTest {
 
-@Component
-public class SdkErrorHandler {
+    private RestClient restClient;
+    private DepositProperties props;
+    private RestClientExecutor executor;
 
-    public void handleError(String sdkName, HttpStatusCode statusCode, String errorMsg) {
-        throw buildHttpException(sdkName, statusCode, errorMsg);
+    private DepositClient depositClient;
+
+    // RestClient chain mocks
+    private RestClient.RequestBodyUriSpec requestBodyUriSpec;
+    private RestClient.ResponseSpec responseSpec;
+
+    @BeforeEach
+    void setUp() {
+        restClient = mock(RestClient.class);
+        props = mock(DepositProperties.class);
+        executor = mock(RestClientExecutor.class);
+
+        requestBodyUriSpec = mock(RestClient.RequestBodyUriSpec.class);
+        responseSpec = mock(RestClient.ResponseSpec.class);
+
+        depositClient = new DepositClient(restClient, props, executor);
     }
 
-    public void handleError(String sdkName, ResourceAccessException ex) {
-        throw buildResourceAccessException(sdkName, ex);
+    @Test
+    void invokeApi_shouldReturnDepositResponse_andExecuteRestClientFlow() {
+        DepositRequest request = mock(DepositRequest.class);
+        DepositResponse expectedResponse = mock(DepositResponse.class);
+
+        when(props.getUrl()).thenReturn("http://localhost:8080/deposit");
+
+        when(restClient.post()).thenReturn(requestBodyUriSpec);
+        when(requestBodyUriSpec.uri("http://localhost:8080/deposit")).thenReturn(requestBodyUriSpec);
+        when(requestBodyUriSpec.body(request)).thenReturn(requestBodyUriSpec);
+        when(requestBodyUriSpec.retrieve()).thenReturn(responseSpec);
+        when(responseSpec.body(DepositResponse.class)).thenReturn(expectedResponse);
+
+        when(executor.execute(eq("DEPOSIT-SERVICE"), any()))
+                .thenAnswer(invocation -> {
+                    @SuppressWarnings("unchecked")
+                    RestClientCallable<DepositResponse> callable =
+                            invocation.getArgument(1, RestClientCallable.class);
+                    return callable.call();
+                });
+
+        DepositResponse actualResponse = depositClient.invokeApi(request);
+
+        assertNotNull(actualResponse);
+        assertEquals(expectedResponse, actualResponse);
+
+        verify(executor).execute(eq("DEPOSIT-SERVICE"), any());
+        verify(props).getUrl();
+        verify(restClient).post();
+        verify(requestBodyUriSpec).uri("http://localhost:8080/deposit");
+        verify(requestBodyUriSpec).body(request);
+        verify(requestBodyUriSpec).retrieve();
+        verify(responseSpec).body(DepositResponse.class);
     }
 
-    public void handleError(String sdkName, RestClientException ex) {
-        throw buildRestClientException(sdkName, ex);
-    }
-
-    private SdkException buildHttpException(String sdkName, HttpStatusCode statusCode, String errorMsg) {
-        String status = String.valueOf(statusCode.value());
-        String message = buildMessage(sdkName, normalize(errorMsg));
-
-        if (statusCode == HttpStatus.UNAUTHORIZED || statusCode == HttpStatus.FORBIDDEN) {
-            return new SdkException(status, message, ErrorCodeConstants.AUTH_ERROR_CODE);
-        }
-
-        if (statusCode == HttpStatus.NOT_FOUND) {
-            return new SdkException(status, message, ErrorCodeConstants.NOT_FOUND_ERROR_CODE);
-        }
-
-        if (statusCode == HttpStatus.BAD_REQUEST || statusCode == HttpStatus.UNPROCESSABLE_ENTITY) {
-            return new SdkException(status, message, ErrorCodeConstants.VALIDATION_ERROR_CODE);
-        }
-
-        if (statusCode == HttpStatus.TOO_MANY_REQUESTS) {
-            return new SdkException(status, message, ErrorCodeConstants.RATE_LIMIT_ERROR_CODE);
-        }
-
-        if (statusCode == HttpStatus.SERVICE_UNAVAILABLE) {
-            return new SdkException(status, message, ErrorCodeConstants.SERVICE_UNAVAILABLE_ERROR_CODE);
-        }
-
-        if (statusCode.is5xxServerError()) {
-            return new SdkException(status, message, ErrorCodeConstants.SERVER_ERROR_CODE);
-        }
-
-        if (statusCode.is4xxClientError()) {
-            return new SdkException(status, message, ErrorCodeConstants.DOWNSTREAM_ERROR_CODE);
-        }
-
-        return new SdkException(status, message, ErrorCodeConstants.DOWNSTREAM_ERROR_CODE);
-    }
-
-    private SdkException buildResourceAccessException(String sdkName, ResourceAccessException ex) {
-        Throwable root = getRootCause(ex);
-        String message = buildMessage(sdkName, normalize(root.getMessage()));
-
-        if (root instanceof ConnectTimeoutException) {
-            return new SdkException("408", message, ErrorCodeConstants.CONNECTION_TIMEOUT_ERROR_CODE);
-        }
-
-        if (root instanceof SocketTimeoutException) {
-            return new SdkException("408", message, ErrorCodeConstants.READ_TIMEOUT_ERROR_CODE);
-        }
-
-        if (root instanceof TimeoutException) {
-            return new SdkException("503", message, ErrorCodeConstants.CONNECTION_POOL_EXHAUSTED_ERROR_CODE);
-        }
-
-        if (root instanceof ConnectException || root instanceof UnknownHostException) {
-            return new SdkException("503", message, ErrorCodeConstants.NETWORK_ERROR_CODE);
-        }
-
-        if (root instanceof SSLException) {
-            return new SdkException("495", message, ErrorCodeConstants.SSL_ERROR_CODE);
-        }
-
-        return new SdkException("503", message, ErrorCodeConstants.NETWORK_ERROR_CODE);
-    }
-
-    private SdkException buildRestClientException(String sdkName, RestClientException ex) {
-        String message = buildMessage(sdkName, normalize(ex.getMessage()));
-        return new SdkException("500", message, ErrorCodeConstants.DOWNSTREAM_ERROR_CODE);
-    }
-
-    private String buildMessage(String sdkName, String errorMsg) {
-        return "[" + sdkName + "] " + errorMsg;
-    }
-
-    private String normalize(String errorMsg) {
-        return (errorMsg == null || errorMsg.isBlank())
-                ? "Downstream API call failed"
-                : errorMsg;
-    }
-
-    private Throwable getRootCause(Throwable ex) {
-        Throwable result = ex;
-        while (result.getCause() != null && result.getCause() != result) {
-            result = result.getCause();
-        }
-        return result;
+    @Test
+    void constructor_shouldCreateObjectSuccessfully() {
+        DepositClient client = new DepositClient(restClient, props, executor);
+        assertNotNull(client);
     }
 }
