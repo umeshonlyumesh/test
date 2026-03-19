@@ -1,108 +1,128 @@
-import org.apache.kafka.clients.producer.RecordMetadata;
-import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.errors.TimeoutException;
+package com.truist.core.enrichment.service;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.truist.core.enums.OperationType;
+import com.truist.core.exception.SdkException;
+import com.truist.core.helper.TokenizationHelper;
+import com.truist.core.enrichment.client.EnrichmentClient;
+import com.truist.core.enrichment.error.CifError;
+import com.truist.core.enrichment.model.CIFDataEnrichmentRequest;
+import com.truist.core.enrichment.model.GetCIFEnrichmentDataResponse;
+import com.truist.core.enrichment.util.XmlUtil;
+
+import jakarta.xml.bind.JAXBException;
+import javax.xml.stream.XMLStreamException;
+
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.support.SendResult;
-import org.springframework.retry.annotation.EnableRetry;
-import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.MockedStatic;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.time.Instant;
-import java.util.concurrent.CompletableFuture;
+@ExtendWith(MockitoExtension.class)
+class CifEnrichmentServiceImplTest {
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+    @Mock
+    private EnrichmentClient enrichmentClient;
 
-@SpringJUnitConfig(classes = RetryableKafkaClientTest.Config.class)
-class RetryableKafkaClientTest {
+    @Mock
+    private TokenizationHelper tokenizationHelper;
 
-    @TestConfiguration
-    @EnableRetry
-    static class Config {
+    private CifEnrichmentServiceImpl service;
 
-        @Bean
-        KafkaTemplate<String, Object> kafkaTemplate() {
-            return mock(KafkaTemplate.class);
+    @BeforeEach
+    void setUp() {
+        service = new CifEnrichmentServiceImpl(enrichmentClient, tokenizationHelper);
+    }
+
+    @Test
+    void getOperationName_shouldReturnEnrichment() {
+        String result = service.getOperationName();
+
+        assertEquals(OperationType.Enrichment.name(), result);
+    }
+
+    @Test
+    void execute_shouldReturnResponse_whenSuccessful() throws Exception {
+        CIFDataEnrichmentRequest request = mock(CIFDataEnrichmentRequest.class);
+        GetCIFEnrichmentDataResponse expectedResponse = mock(GetCIFEnrichmentDataResponse.class);
+
+        String finalPayload = "<xml>request</xml>";
+        String responseXml = "<xml>response</xml>";
+
+        doNothing().when(tokenizationHelper).detokenizeRequest(request);
+        doNothing().when(tokenizationHelper).tokenizeResponse(expectedResponse);
+        when(enrichmentClient.invokeApi(finalPayload)).thenReturn(responseXml);
+
+        try (MockedStatic<XmlUtil> xmlUtilMock = org.mockito.Mockito.mockStatic(XmlUtil.class)) {
+            xmlUtilMock.when(() -> XmlUtil.prepareReq(request)).thenReturn(finalPayload);
+            xmlUtilMock.when(() -> XmlUtil.convertToResponse(responseXml)).thenReturn(expectedResponse);
+
+            GetCIFEnrichmentDataResponse actual = service.execute(request);
+
+            assertSame(expectedResponse, actual);
+            verify(tokenizationHelper).detokenizeRequest(request);
+            verify(enrichmentClient).invokeApi(finalPayload);
+            verify(tokenizationHelper).tokenizeResponse(expectedResponse);
+
+            xmlUtilMock.verify(() -> XmlUtil.prepareReq(request));
+            xmlUtilMock.verify(() -> XmlUtil.convertToResponse(responseXml));
         }
+    }
 
-        @Bean
-        RetryableKafkaClient retryableKafkaClient(KafkaTemplate<String, Object> kafkaTemplate) {
-            return new RetryableKafkaClient(kafkaTemplate);
+    @Test
+    void execute_shouldThrowSdkException_whenPrepareReqThrowsJaxbException() throws Exception {
+        CIFDataEnrichmentRequest request = mock(CIFDataEnrichmentRequest.class);
+
+        doNothing().when(tokenizationHelper).detokenizeRequest(request);
+
+        try (MockedStatic<XmlUtil> xmlUtilMock = org.mockito.Mockito.mockStatic(XmlUtil.class)) {
+            xmlUtilMock.when(() -> XmlUtil.prepareReq(request))
+                    .thenThrow(new JAXBException("prepare failed"));
+
+            SdkException ex = assertThrows(SdkException.class, () -> service.execute(request));
+
+            assertEquals(CifError.CIF_SDK_ERROR.getCode(), ex.getCode());
+            assertEquals(CifError.CIF_SDK_ERROR.getMessage(), ex.getMessage());
+
+            verify(tokenizationHelper).detokenizeRequest(request);
+            xmlUtilMock.verify(() -> XmlUtil.prepareReq(request));
         }
     }
 
-    @Autowired
-    KafkaTemplate<String, Object> kafkaTemplate;
-
-    @Autowired
-    RetryableKafkaClient client;
-
     @Test
-    void successFirstAttempt() throws Exception {
+    void execute_shouldThrowSdkException_whenConvertToResponseThrowsXmlStreamException() throws Exception {
+        CIFDataEnrichmentRequest request = mock(CIFDataEnrichmentRequest.class);
 
-        SendResult<String, Object> success = successSendResult("topicA", 0, 10L);
+        String finalPayload = "<xml>request</xml>";
+        String responseXml = "<xml>response</xml>";
 
-        when(kafkaTemplate.send(eq("topicA"), eq("k1"), any()))
-                .thenReturn(CompletableFuture.completedFuture(success));
+        doNothing().when(tokenizationHelper).detokenizeRequest(request);
+        when(enrichmentClient.invokeApi(finalPayload)).thenReturn(responseXml);
 
-        SendResult<String, Object> result =
-                client.sendWithRetry("topicA", "k1", "payload");
+        try (MockedStatic<XmlUtil> xmlUtilMock = org.mockito.Mockito.mockStatic(XmlUtil.class)) {
+            xmlUtilMock.when(() -> XmlUtil.prepareReq(request)).thenReturn(finalPayload);
+            xmlUtilMock.when(() -> XmlUtil.convertToResponse(responseXml))
+                    .thenThrow(new XMLStreamException("response parse failed"));
 
-        assertEquals("topicA", result.getRecordMetadata().topic());
-        verify(kafkaTemplate, times(1)).send(eq("topicA"), eq("k1"), any());
-    }
+            SdkException ex = assertThrows(SdkException.class, () -> service.execute(request));
 
-    @Test
-    void retriableTimeoutThenSuccess() throws Exception {
+            assertEquals(CifError.CIF_SDK_ERROR.getCode(), ex.getCode());
+            assertEquals(CifError.CIF_SDK_ERROR.getMessage(), ex.getMessage());
 
-        CompletableFuture<SendResult<String, Object>> failFuture =
-                CompletableFuture.failedFuture(new TimeoutException("temporary"));
+            verify(tokenizationHelper).detokenizeRequest(request);
+            verify(enrichmentClient).invokeApi(finalPayload);
 
-        SendResult<String, Object> success = successSendResult("topicB", 1, 20L);
-
-        when(kafkaTemplate.send(eq("topicB"), eq("k2"), any()))
-                .thenReturn(failFuture) // first attempt
-                .thenReturn(CompletableFuture.completedFuture(success)); // retry
-
-        SendResult<String, Object> result =
-                client.sendWithRetry("topicB", "k2", "payload");
-
-        assertEquals(20L, result.getRecordMetadata().offset());
-        verify(kafkaTemplate, times(2)).send(eq("topicB"), eq("k2"), any());
-    }
-
-    @Test
-    void maxAttemptsReached_shouldThrow() {
-
-        CompletableFuture<SendResult<String, Object>> fail =
-                CompletableFuture.failedFuture(new TimeoutException("still down"));
-
-        when(kafkaTemplate.send(eq("topicC"), eq("k3"), any()))
-                .thenReturn(fail)
-                .thenReturn(fail)
-                .thenReturn(fail);
-
-        RuntimeException ex = assertThrows(RuntimeException.class,
-                () -> client.sendWithRetry("topicC", "k3", "payload"));
-
-        assertTrue(ex.getMessage().contains("permanently failed"));
-        verify(kafkaTemplate, times(3)).send(eq("topicC"), eq("k3"), any());
-    }
-
-    // helper
-    private static SendResult<String, Object> successSendResult(String topic, int partition, long offset) {
-        RecordMetadata rm = new RecordMetadata(
-                new TopicPartition(topic, partition),
-                0L,
-                offset,
-                Instant.now().toEpochMilli(),
-                0,
-                0
-        );
-        return new SendResult<>(null, rm);
+            xmlUtilMock.verify(() -> XmlUtil.prepareReq(request));
+            xmlUtilMock.verify(() -> XmlUtil.convertToResponse(responseXml));
+        }
     }
 }
