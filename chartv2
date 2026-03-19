@@ -1,77 +1,143 @@
-EXPLAIN (ANALYZE, BUFFERS)
-WITH pt_top AS (
-    SELECT
-        pt.uid,
-        pt.archive_date,
-        pt.instruction_uid,
-        pt.transaction_id,
-        pt.reject_reason_code,
-        pt.reject_info,
-        pt.transaction_type,
-        pt.debit_account,
-        pt.credit_account,
-        pt.credit_mop,
-        pt.debit_mop,
-        pt.payment_freq_type,
-        pt.initiator_cif,
-        pt.execution_date,
-        pt.settlement_date,
-        pt.credit_department,
-        pt.debit_department,
-        pt.xws_reference_id,
-        pt.amount_breakup,
-        pt.addenda,
-        pt.uvf_flag,
-        pt.created_by,
-        pt.updated_by,
-        pt.return_reason_code,
-        pt.return_info
-    FROM moneymovement.payment_transaction pt
-    WHERE pt.archive_date >= DATE '2026-01-01'
-      AND pt.archive_date <= DATE '2026-03-01'
-    ORDER BY pt.uid DESC
-    FETCH FIRST 50000 ROWS ONLY
-)
-SELECT
-    pt.transaction_id,
-    pi.parent_reference,
-    pi.instruction_reference,
-    t.state,
-    pi.amount,
-    pi.amount_type,
-    pi.channel_id,
-    pt.reject_reason_code,
-    pt.reject_info,
-    pt.transaction_type,
-    pt.debit_account,
-    pt.credit_account,
-    pt.credit_mop,
-    pt.debit_mop,
-    t.updated_timestamp,
-    t.created_timestamp,
-    pt.payment_freq_type,
-    t.status,
-    pt.initiator_cif,
-    pt.execution_date,
-    pt.settlement_date,
-    pt.credit_department,
-    pt.debit_department,
-    pt.xws_reference_id,
-    pt.amount_breakup,
-    t.lob,
-    pt.addenda,
-    pt.uvf_flag,
-    pt.created_by,
-    pt.updated_by,
-    pt.return_reason_code,
-    pt.return_info
-FROM pt_top pt
-JOIN moneymovement.transaction t
-  ON t.archive_date = pt.archive_date
- AND t.uid = pt.uid
-JOIN moneymovement.payment_instruction pi
-  ON pi.instruction_date = pt.archive_date
- AND pi.uid = pt.instruction_uid
-WHERE t.lob = 'MTG'
-ORDER BY pt.uid DESC
-FETCH FIRST 5000 ROWS ONLY;
+package com.truist.core.fraud.service;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.truist.core.enums.OperationType;
+import com.truist.core.exception.SdkException;
+import com.truist.core.fraud.client.FraudClient;
+import com.truist.core.fraud.error.IfmxError;
+import com.truist.core.fraud.helper.TokenizationHelper;
+import com.truist.core.fraud.model.FraudRequest;
+import com.truist.core.fraud.model.FraudResponse;
+import com.truist.core.model.Parameter;
+import com.truist.core.util.JsonCleaner;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.io.IOException;
+import java.util.List;
+import java.util.Map;
+
+@ExtendWith(MockitoExtension.class)
+class FraudServiceImplTest {
+
+    @Mock
+    private FraudClient fraudClient;
+
+    @Mock
+    private ThrowingTemplate template;
+
+    @Mock
+    private TokenizationHelper tokenizationHelper;
+
+    @Mock
+    private JsonCleaner jsonCleaner;
+
+    private FraudServiceImpl fraudService;
+
+    @BeforeEach
+    void setUp() {
+        fraudService = new FraudServiceImpl(
+                fraudClient,
+                template,
+                tokenizationHelper,
+                jsonCleaner
+        );
+    }
+
+    @Test
+    void getOperationName_shouldReturnFraudcheck() {
+        String result = fraudService.getOperationName();
+
+        assertEquals(OperationType.Fraudcheck.name(), result);
+    }
+
+    @Test
+    void execute_shouldReturnSuccessResponse_whenRequestIsProcessed() throws IOException {
+        FraudRequest fraudRequest = mock(FraudRequest.class);
+        FraudResponse clientResponse = new FraudResponse();
+
+        Parameter p1 = mock(Parameter.class);
+        Parameter p2 = mock(Parameter.class);
+
+        when(fraudRequest.getParameters()).thenReturn(List.of(p1, p2));
+
+        when(p1.getFieldId()).thenReturn("accountId");
+        when(p1.getFieldValue()).thenReturn("12345");
+
+        when(p2.getFieldId()).thenReturn("channel");
+        when(p2.getFieldValue()).thenReturn("MOBILE");
+
+        doNothing().when(tokenizationHelper).detokenizeFields(fraudRequest);
+
+        when(template.apply(anyMap())).thenReturn("""
+                {
+                  "a": "b",
+                  "nullable": ,
+                  "nullable2": ,
+                  "accountId": "12345"
+                }
+                """);
+
+        when(jsonCleaner.cleanRenderedJson(org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn("""
+                {"a":"b","accountId":"12345"}
+                """);
+
+        when(fraudClient.invokeApi("""
+                {"a":"b","accountId":"12345"}
+                """)).thenReturn(clientResponse);
+
+        FraudResponse actual = fraudService.execute(fraudRequest);
+
+        assertNotNull(actual);
+        assertEquals(clientResponse, actual);
+        assertEquals("0", actual.getReturnCode());
+        assertEquals("SUCCESS", actual.getMessage());
+
+        verify(tokenizationHelper).detokenizeFields(fraudRequest);
+        verify(template).apply(anyMap());
+        verify(jsonCleaner).cleanRenderedJson(org.mockito.ArgumentMatchers.anyString());
+        verify(fraudClient).invokeApi("""
+                {"a":"b","accountId":"12345"}
+                """);
+    }
+
+    @Test
+    void execute_shouldThrowSdkException_whenTemplateApplyThrowsIOException() throws IOException {
+        FraudRequest fraudRequest = mock(FraudRequest.class);
+        Parameter p1 = mock(Parameter.class);
+
+        when(fraudRequest.getParameters()).thenReturn(List.of(p1));
+        when(p1.getFieldId()).thenReturn("accountId");
+        when(p1.getFieldValue()).thenReturn("12345");
+
+        doNothing().when(tokenizationHelper).detokenizeFields(fraudRequest);
+        when(template.apply(anyMap())).thenThrow(new IOException("template failure"));
+
+        SdkException ex = assertThrows(SdkException.class, () -> fraudService.execute(fraudRequest));
+
+        assertEquals(IfmxError.IFMX_SDK_ERROR.getCode(), ex.getCode());
+        assertEquals(IfmxError.IFMX_SDK_ERROR.getMessage(), ex.getMessage());
+
+        verify(tokenizationHelper).detokenizeFields(fraudRequest);
+        verify(template).apply(anyMap());
+    }
+
+    /**
+     * Use this only if your service field is a checked-exception-capable template type.
+     */
+    interface ThrowingTemplate {
+        String apply(Map<String, String> fields) throws IOException;
+    }
+}
