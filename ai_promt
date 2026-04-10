@@ -1,0 +1,74 @@
+1) Bad prompt
+Build a Spring Boot CRUD app using JSONPlaceholder comments API.
+Why this is bad
+
+It does not tell the AI:
+
+what architecture to use
+whether this is external API integration or in-memory CRUD
+which HTTP client to use
+whether validation is needed
+how errors should be handled
+what exact endpoints to expose
+what quality level is expected
+
+2) Medium prompt
+Create a Spring Boot application for JSONPlaceholder comments API.
+
+Requirements:
+- Expose CRUD endpoints for comments
+- Use Java and Spring Boot
+- Keep the code clean
+- Use DTOs
+- Add a service layer
+
+3) Excellent prompt
+Act as a senior Java Spring Boot developer.
+
+Build a small but production-style Spring Boot application that wraps the external JSONPlaceholder comments API.
+
+External API:
+- Base URL: https://jsonplaceholder.typicode.com
+- Resource: /comments
+
+Internal API requirements:
+- Expose these endpoints:
+  - GET /api/comments
+  - GET /api/comments/{id}
+  - POST /api/comments
+  - PUT /api/comments/{id}
+  - DELETE /api/comments/{id}
+
+Technical requirements:
+- Use Java 21 and Spring Boot 3.x
+- Use layered architecture:
+  - controller
+  - service
+  - client
+  - dto
+  - exception
+- Use Spring RestClient for external API calls
+- Use constructor injection only
+- Read external base URL from application.yml
+- Do not call external API directly from controller
+- Do not use field injection
+- Do not use Object.class
+- Do not generate in-memory CRUD using ArrayList
+
+
+Validation requirements:
+- Validate create/update request using Jakarta Validation
+- email must be validated properly
+- required fields must be enforced
+
+Error handling requirements:
+- Add global exception handling using @RestControllerAdvice
+- Handle downstream 4xx, 5xx, and connection errors cleanly
+- Return structured error response
+
+Output requirements:
+1. Show package structure
+2. Generate all classes
+3. Generate application.yml
+4. Keep code concise but realistic
+5. Do not use pseudocode
