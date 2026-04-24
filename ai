@@ -1,80 +1,120 @@
-package com.yourpackage.deposit;
+package com.trusit.orchestrator.filter;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.trusit.common.model.StandardRequest;
+import com.trusit.orchestrator.logging.MdcContext;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ReadListener;
+import jakarta.servlet.ServletInputStream;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletRequestWrapper;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.springframework.web.client.RestClient;
+import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
 
-class DepositClientTest {
+/**
+ * Initializes per-request MDC and restores previous MDC at request end.
+ */
+@Component
+public class MdcFilter extends OncePerRequestFilter {
+    private static final String CORE_PROCESS_PATH = "/api/v1/process";
+    private static final String APPLICATION_JSON = "application/json";
 
-    private RestClient restClient;
-    private DepositProperties props;
-    private RestClientExecutor executor;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private DepositClient depositClient;
+    /**
+     * Clears MDC at ingress and, for core process requests, sets MDC from request body.
+     */
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+            throws ServletException, IOException {
+        try (MdcContext.MdcScope ignored = MdcContext.openMdcScope(null, null)) {
+            if (!isCoreProcessJsonRequest(request)) {
+                filterChain.doFilter(request, response);
+                return;
+            }
 
-    // RestClient chain mocks
-    private RestClient.RequestBodyUriSpec requestBodyUriSpec;
-    private RestClient.ResponseSpec responseSpec;
-
-    @BeforeEach
-    void setUp() {
-        restClient = mock(RestClient.class);
-        props = mock(DepositProperties.class);
-        executor = mock(RestClientExecutor.class);
-
-        requestBodyUriSpec = mock(RestClient.RequestBodyUriSpec.class);
-        responseSpec = mock(RestClient.ResponseSpec.class);
-
-        depositClient = new DepositClient(restClient, props, executor);
+            var wrappedRequest = new ReReadableRequest(request);
+            MdcContext.putCoreRequestContext(toCoreRequest(wrappedRequest.body()));
+            filterChain.doFilter(wrappedRequest, response);
+        }
     }
 
-    @Test
-    void invokeApi_shouldReturnDepositResponse_andExecuteRestClientFlow() {
-        DepositRequest request = mock(DepositRequest.class);
-        DepositResponse expectedResponse = mock(DepositResponse.class);
+    private boolean isCoreProcessJsonRequest(HttpServletRequest request) {
+        var isProcessEndpoint = "POST".equalsIgnoreCase(request.getMethod())
+                && request.getRequestURI() != null
+                && request.getRequestURI().endsWith(CORE_PROCESS_PATH);
+        if (!isProcessEndpoint) {
+            return false;
+        }
 
-        when(props.getUrl()).thenReturn("http://localhost:8080/deposit");
-
-        when(restClient.post()).thenReturn(requestBodyUriSpec);
-        when(requestBodyUriSpec.uri("http://localhost:8080/deposit")).thenReturn(requestBodyUriSpec);
-        when(requestBodyUriSpec.body(request)).thenReturn(requestBodyUriSpec);
-        when(requestBodyUriSpec.retrieve()).thenReturn(responseSpec);
-        when(responseSpec.body(DepositResponse.class)).thenReturn(expectedResponse);
-
-        when(executor.execute(eq("DEPOSIT-SERVICE"), any()))
-                .thenAnswer(invocation -> {
-                    @SuppressWarnings("unchecked")
-                    RestClientCallable<DepositResponse> callable =
-                            invocation.getArgument(1, RestClientCallable.class);
-                    return callable.call();
-                });
-
-        DepositResponse actualResponse = depositClient.invokeApi(request);
-
-        assertNotNull(actualResponse);
-        assertEquals(expectedResponse, actualResponse);
-
-        verify(executor).execute(eq("DEPOSIT-SERVICE"), any());
-        verify(props).getUrl();
-        verify(restClient).post();
-        verify(requestBodyUriSpec).uri("http://localhost:8080/deposit");
-        verify(requestBodyUriSpec).body(request);
-        verify(requestBodyUriSpec).retrieve();
-        verify(responseSpec).body(DepositResponse.class);
+        var contentType = request.getContentType();
+        return contentType != null && contentType.toLowerCase().startsWith(APPLICATION_JSON);
     }
 
-    @Test
-    void constructor_shouldCreateObjectSuccessfully() {
-        DepositClient client = new DepositClient(restClient, props, executor);
-        assertNotNull(client);
+    private StandardRequest toCoreRequest(byte[] requestBody) {
+        if (requestBody.length == 0) {
+            return null;
+        }
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> requestMap = objectMapper.readValue(requestBody, new TypeReference<Map<String, Object>>() {});
+            return StandardRequest.fromJson(requestMap);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static final class ReReadableRequest extends HttpServletRequestWrapper {
+        private final byte[] body;
+
+        private ReReadableRequest(HttpServletRequest request) throws IOException {
+            super(request);
+            this.body = request.getInputStream().readAllBytes();
+        }
+
+        private byte[] body() {
+            return body;
+        }
+
+        @Override
+        public ServletInputStream getInputStream() {
+            var inputStream = new ByteArrayInputStream(body);
+            return new ServletInputStream() {
+                @Override
+                public int read() {
+                    return inputStream.read();
+                }
+
+                @Override
+                public boolean isFinished() {
+                    return inputStream.available() == 0;
+                }
+
+                @Override
+                public boolean isReady() {
+                    return true;
+                }
+
+                @Override
+                public void setReadListener(ReadListener readListener) {
+                    // no-op
+                }
+            };
+        }
+
+        @Override
+        public BufferedReader getReader() {
+            return new BufferedReader(new InputStreamReader(getInputStream(), StandardCharsets.UTF_8));
+        }
     }
 }
