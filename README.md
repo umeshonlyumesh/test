@@ -1,142 +1,45 @@
-import org.apache.kafka.common.errors.TimeoutException;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+Application Guidance
+In this application you must: 
 
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicInteger;
+Describe in detail a project on which you delivered a generative or agentic AI solution, OR describe a hands-on workshop experience in which you developed a generative or agentic AI solution. Describe the deliverables and outcomes of this experience. 
+Describe your technical skills used in developing applications or work products to achieve project outcomes. Be sure to utilize your knowledge of our IBM Consulting AI offerings and watsonx or Strategic Partner generative and agentic AI capabilities.  
+Please respond to each of the prompts in this application. Your information will be shared with your manager for review and approval.
+Generative or Agentic AI Client or Project
+Describe the client need or business problem addressed using generative or agentic AI.  
+If a client, share client name, dates, and project objectives. 
+If not a client, describe the project, workshop, or similar for which you developed generative and/or agentic AI work products or deliverables.
 
-import static org.junit.jupiter.api.Assertions.*;
 
-class AsyncRetryTest {
+Client gen or agentic AI experience input*
+0/1000
 
-  private ScheduledExecutorService scheduler;
-  private AsyncRetry asyncRetry;
+watsonx or Strategic Partner Experience
+How have you used watsonx and/or Strategic Partner generative or agentic AI products or functionality to achieve project outcomes? 
+If you are working on AWS, highlight your experience with AWS capabilities such as Bedrock, SageMaker JumpStart or related AWS Gen AI services. If working on Azure, highlight experience with OpenAI, Co-Pilot or other Microsoft Gen AI services. If another Strategic Partner (e.g., Salesforce, SAP, Oracle, etc.) please identify the product and how it was used in a generative or agentic AI context
 
-  @BeforeEach
-  void setUp() {
-    scheduler = Executors.newSingleThreadScheduledExecutor();
-    asyncRetry = new AsyncRetry(scheduler);
-  }
 
-  @AfterEach
-  void tearDown() {
-    scheduler.shutdownNow();
-  }
+watsonx or Strategic Partner experience*
+0/1000
 
-  @Test
-  void retryAsync_successOnFirstAttempt_completesNormally() throws Exception {
-    CompletableFuture<String> cf = asyncRetry.retryAsync(
-        () -> CompletableFuture.completedFuture("OK"),
-        3,
-        10
-    );
+Application, Work Product, or Deliverable
+Describe in detail the application(s) or the deliverables and work products that you created that support achievement of generative and/or agentic AI outcomes. 
+Show how you created work products (e.g., share samples of code assets on Jupyter Notebooks or on similar). 
 
-    assertEquals("OK", cf.get(1, TimeUnit.SECONDS));
-  }
 
-  @Test
-  void retryAsync_retriableFailureThenSuccess_retriesAndCompletes() throws Exception {
-    AtomicInteger attempts = new AtomicInteger(0);
+Work Products or Deliverables*
+0/3000
 
-    CompletableFuture<String> cf = asyncRetry.retryAsync(
-        () -> {
-          int n = attempts.incrementAndGet();
-          if (n < 3) {
-            CompletableFuture<String> fail = new CompletableFuture<>();
-            fail.completeExceptionally(new TimeoutException("temporary"));
-            return fail;
-          }
-          return CompletableFuture.completedFuture("OK_AFTER_RETRY");
-        },
-        5,
-        10
-    );
+Approach, Methods, and Tools
+How did you approach delivery of the AI solution using IBM tools, techniques, and/or methods (e.g., IBM Consulting Advantage, IBM Garage, specific assistants or agents, etc.)?
 
-    assertEquals("OK_AFTER_RETRY", cf.get(2, TimeUnit.SECONDS));
-    assertEquals(3, attempts.get(), "Should attempt exactly 3 times");
-  }
 
-  @Test
-  void retryAsync_nonRetriableFailure_doesNotRetry_completesExceptionally() {
-    AtomicInteger attempts = new AtomicInteger(0);
+Approach, Methods, and Tools*
+0/1000
 
-    CompletableFuture<String> cf = asyncRetry.retryAsync(
-        () -> {
-          attempts.incrementAndGet();
-          CompletableFuture<String> fail = new CompletableFuture<>();
-          fail.completeExceptionally(new IllegalArgumentException("bad payload"));
-          return fail;
-        },
-        5,
-        10
-    );
+Management of Risks and Ethical Concerns
+What types of AI risks and ethical concerns exist, and how did you address these risks? You should describe how you used IBM's approach to Trustworthy AI, AI Ethics, and governance.
 
-    ExecutionException ee = assertThrows(ExecutionException.class, () -> cf.get(1, TimeUnit.SECONDS));
-    assertTrue(ee.getCause() instanceof IllegalArgumentException);
-    assertEquals(1, attempts.get(), "Should not retry non-retriable exception");
-  }
 
-  @Test
-  void retryAsync_maxAttemptsReached_completesExceptionally() {
-    AtomicInteger attempts = new AtomicInteger(0);
+Management of Risks and AI Ethical Concerns*
+0/1000
 
-    CompletableFuture<String> cf = asyncRetry.retryAsync(
-        () -> {
-          attempts.incrementAndGet();
-          CompletableFuture<String> fail = new CompletableFuture<>();
-          fail.completeExceptionally(new TimeoutException("still down"));
-          return fail;
-        },
-        3,
-        10
-    );
-
-    ExecutionException ee = assertThrows(ExecutionException.class, () -> cf.get(2, TimeUnit.SECONDS));
-    // Depending on how CompletionException is wrapped, cause may be TimeoutException or CompletionException
-    Throwable cause = ee.getCause() instanceof CompletionException ? ee.getCause().getCause() : ee.getCause();
-    assertTrue(cause instanceof TimeoutException);
-    assertEquals(3, attempts.get(), "Should retry exactly maxAttempts times");
-  }
-
-  @Test
-  void retryAsync_actionCallableThrows_completesExceptionallyImmediately() {
-    AtomicInteger attempts = new AtomicInteger(0);
-
-    CompletableFuture<String> cf = asyncRetry.retryAsync(
-        () -> {
-          attempts.incrementAndGet();
-          throw new RuntimeException("boom");
-        },
-        5,
-        10
-    );
-
-    ExecutionException ee = assertThrows(ExecutionException.class, () -> cf.get(1, TimeUnit.SECONDS));
-    assertTrue(ee.getCause() instanceof RuntimeException);
-    assertEquals("boom", ee.getCause().getMessage());
-    assertEquals(1, attempts.get(), "Callable throws before returning future -> no retries");
-  }
-
-  @Test
-  void retryAsync_retriableWrappedInCompletionException_shouldRetry() throws Exception {
-    AtomicInteger attempts = new AtomicInteger(0);
-
-    CompletableFuture<String> cf = asyncRetry.retryAsync(
-        () -> {
-          int n = attempts.incrementAndGet();
-          if (n == 1) {
-            CompletableFuture<String> fail = new CompletableFuture<>();
-            fail.completeExceptionally(new CompletionException(new TimeoutException("wrapped")));
-            return fail;
-          }
-          return CompletableFuture.completedFuture("OK");
-        },
-        3,
-        10
-    );
-
-    assertEquals("OK", cf.get(2, TimeUnit.SECONDS));
-    assertEquals(2, attempts.get());
-  }
-}
